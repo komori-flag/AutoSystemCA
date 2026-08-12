@@ -1,0 +1,11 @@
+# 强制 LF 换行：Android 的 mksh/sh 遇到 CRLF 会执行失败，
+# 模块脚本必须始终以 LF 存储/检出
+* text=auto
+*.sh    text eol=lf
+*.py    text eol=lf
+*.prop  text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
