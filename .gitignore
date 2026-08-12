@@ -1,0 +1,9 @@
+# 构建产物（由 CI / build.py 生成）
+*.zip
+
+# 模块运行时状态
+.installed.list
+
+# Python
+__pycache__/
+*.pyc

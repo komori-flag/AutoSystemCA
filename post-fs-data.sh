@@ -1,0 +1,150 @@
+#!/system/bin/sh
+# AutoSystemCA - boot-time system CA injector (KernelSU / Magisk / APatch)
+#
+# At boot this script:
+#   1. scans $MODDIR/certs/ for .crt / .cer / .der / .pem certificates
+#   2. auto-detects DER vs PEM encoding and converts to PEM
+#   3. computes the Android trust-store hash (subject_hash_old)
+#   4. converts to DER and writes <hash>.N into the module's system
+#      overlay (system/etc/security/cacerts and, on Android 14+,
+#      system/apex/com.android.conscrypt/cacerts), which the root
+#      manager magic-mounts into the real trust store.
+#
+# The real /system is never modified: OTA-safe and fully removed when
+# the module is uninstalled.
+#
+# Debug: logcat | grep AutoSystemCA
+
+MODDIR=${0%/*}
+
+LOG_TAG=AutoSystemCA
+CERT_DIR="$MODDIR/certs"
+MOD_SYSTEM="$MODDIR/system"
+MANIFEST="$MODDIR/.installed.list"
+TMP_DIR=/data/local/tmp/auto_system_ca
+
+log_i() {
+    if [ -x /system/bin/log ]; then
+        log -t "$LOG_TAG" "$1"
+    else
+        echo "AutoSystemCA: $1"
+    fi
+}
+
+mkdir -p "$CERT_DIR" "$TMP_DIR"
+
+# ------------------------------------------------------------------
+# 1. openssl is required for conversion (present on most ROMs;
+#    alternatively drop a static openssl binary into $MODDIR/tools/)
+# ------------------------------------------------------------------
+OPENSSL=$(command -v openssl 2>/dev/null)
+if [ -z "$OPENSSL" ] && [ -x "$MODDIR/tools/openssl" ]; then
+    OPENSSL="$MODDIR/tools/openssl"
+fi
+if [ -z "$OPENSSL" ] || ! "$OPENSSL" version >/dev/null 2>&1; then
+    log_i "openssl not available, skipping injection"
+    exit 0
+fi
+
+# ------------------------------------------------------------------
+# 2. resolve trust-store targets (module overlay paths, NOT /system!)
+#    Android 14+: /system/etc/security/cacerts is a symlink to the
+#    apex store, so inject into the apex overlay instead.
+# ------------------------------------------------------------------
+TARGETS=""
+if [ -d /apex/com.android.conscrypt/cacerts ]; then
+    TARGETS="$MOD_SYSTEM/apex/com.android.conscrypt/cacerts"
+    if [ ! -L /system/etc/security/cacerts ]; then
+        TARGETS="$TARGETS $MOD_SYSTEM/etc/security/cacerts"
+    fi
+else
+    TARGETS="$MOD_SYSTEM/etc/security/cacerts"
+fi
+
+# ------------------------------------------------------------------
+# 3. cleanup: remove previously installed hashes whose source
+#    certificate file has been deleted from certs/
+# ------------------------------------------------------------------
+if [ -f "$MANIFEST" ]; then
+    while IFS='|' read -r installed_name src_name; do
+        [ -n "$installed_name" ] || continue
+        [ -f "$CERT_DIR/$src_name" ] && continue
+        for t in $TARGETS; do
+            [ -f "$t/$installed_name" ] && rm -f "$t/$installed_name"
+        done
+        log_i "removed stale $installed_name (source $src_name deleted)"
+    done < "$MANIFEST"
+fi
+
+# ------------------------------------------------------------------
+# 4. convert & install every certificate in certs/
+# ------------------------------------------------------------------
+: > "$MANIFEST.tmp"
+
+for src in "$CERT_DIR"/*; do
+    [ -f "$src" ] || continue
+    name=$(basename "$src")
+    case "$name" in
+        *.crt|*.cer|*.der|*.pem|*.CRT|*.CER|*.DER|*.PEM) ;;
+        *) log_i "skip $name (unsupported extension)"; continue ;;
+    esac
+
+    PEM="$TMP_DIR/$name.pem"
+    DER="$TMP_DIR/$name.der"
+    rm -f "$PEM" "$DER"
+
+    # auto-detect DER vs PEM encoding
+    if grep -q "BEGIN CERTIFICATE" "$src" 2>/dev/null; then
+        cp "$src" "$PEM"
+    else
+        "$OPENSSL" x509 -inform DER -in "$src" -outform PEM -out "$PEM" 2>/dev/null
+    fi
+    [ -f "$PEM" ] || { log_i "failed to read certificate: $name"; continue; }
+
+    HASH=$("$OPENSSL" x509 -subject_hash_old -in "$PEM" -noout 2>/dev/null)
+    [ -n "$HASH" ] || { log_i "not a valid certificate (no subject hash): $name"; continue; }
+
+    # the system trust store requires DER content, not PEM
+    "$OPENSSL" x509 -in "$PEM" -outform DER -out "$DER" 2>/dev/null
+    [ -f "$DER" ] || { log_i "failed to convert to DER: $name"; continue; }
+
+    log_i "processing $name (hash $HASH)"
+
+    index=""
+    for t in $TARGETS; do
+        mkdir -p "$t"
+        n=0
+        while [ "$n" -lt 100 ]; do
+            target="$t/$HASH.$n"
+            if [ ! -f "$target" ]; then
+                cp "$DER" "$target"
+                chmod 0644 "$target"
+                chown 0:0 "$target"
+                # fix SELinux context so the trust manager can read it
+                if command -v chcon >/dev/null 2>&1; then
+                    chcon u:object_r:system_file:s0 "$target" 2>/dev/null
+                elif [ -x /system/bin/toybox ]; then
+                    /system/bin/toybox chcon u:object_r:system_file:s0 "$target" 2>/dev/null
+                fi
+                [ -z "$index" ] && index="$HASH.$n"
+                break
+            elif cmp -s "$DER" "$target"; then
+                # identical certificate already installed at this index
+                [ -z "$index" ] && index="$HASH.$n"
+                break
+            else
+                # hash collision -> next index (.0/.1/.2 ...)
+                n=$((n + 1))
+            fi
+        done
+    done
+
+    if [ -n "$index" ]; then
+        echo "$index|$name" >> "$MANIFEST.tmp"
+        log_i "installed $index <- $name"
+    fi
+done
+
+[ -f "$MANIFEST.tmp" ] && mv -f "$MANIFEST.tmp" "$MANIFEST"
+
+log_i "finished"
