@@ -19,6 +19,7 @@ MODDIR=${0%/*}
 
 LOG_TAG=AutoSystemCA
 CERT_DIR="$MODDIR/certs"
+LOG_FILE="$MODDIR/last-run.log"
 MOD_SYSTEM="$MODDIR/system"
 MANIFEST="$MODDIR/.installed.list"
 TMP_DIR=/data/local/tmp/auto_system_ca
@@ -29,15 +30,21 @@ log_i() {
     else
         echo "AutoSystemCA: $1"
     fi
+    # 文件日志：即使开机早期 logd 未就绪，也能确认脚本是否运行过
+    echo "$(date '+%m-%d %H:%M:%S') $1" >> "$LOG_FILE" 2>/dev/null
 }
 
 mkdir -p "$CERT_DIR" "$TMP_DIR"
+
+log_i "post-fs-data.sh started"
 
 # ------------------------------------------------------------------
 # 1. openssl is required for conversion (present on most ROMs;
 #    alternatively drop a static openssl binary into $MODDIR/tools/)
 # ------------------------------------------------------------------
 OPENSSL=$(command -v openssl 2>/dev/null)
+[ -z "$OPENSSL" ] && [ -x /system/bin/openssl ] && OPENSSL=/system/bin/openssl
+[ -z "$OPENSSL" ] && [ -x /system/xbin/openssl ] && OPENSSL=/system/xbin/openssl
 if [ -z "$OPENSSL" ] && [ -x "$MODDIR/tools/openssl" ]; then
     OPENSSL="$MODDIR/tools/openssl"
 fi

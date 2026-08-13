@@ -13,6 +13,7 @@ FILES = [
     "customize.sh",
     "post-fs-data.sh",
     "service.sh",
+    "action.sh",
     "certs/README.txt",
     "README.md",
     "changelog.md",

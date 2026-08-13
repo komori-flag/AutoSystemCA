@@ -38,7 +38,8 @@ certs/ 目录 (.crt/.cer/.der/.pem)
    /data/adb/modules/auto_system_ca/certs/
    ```
    支持 `.crt` `.cer` `.der` `.pem`，文件名不要含空格。
-3. 再次重启（或运行 `su -c 'sh /data/adb/modules/auto_system_ca/post-fs-data.sh'`）。
+3. 重启生效；或免重启注入：KSU Manager → 模块 → AutoSystemCA → 「执行」（`action.sh`），
+   或 `su -c 'sh /data/adb/modules/auto_system_ca/post-fs-data.sh'`。
 4. 验证：
    ```bash
    ls /system/etc/security/cacerts/ | grep -E '[0-9a-f]{8}\.0'
@@ -57,6 +58,23 @@ certs/ 目录 (.crt/.cer/.der/.pem)
 - 清单驱动的自动清理：源文件删除后重启自动移除对应证书
 - Android 7~16 自动适配 system / apex 双路径
 - 幂等：重复运行不会产生重复安装
+
+## 常见问题
+
+**证书没有注入 / 没有生效**
+
+1. 确认注入脚本是否运行过：`logcat -d | grep AutoSystemCA`，或查看
+   `cat /data/adb/modules/auto_system_ca/last-run.log`（文件日志，开机早期也可靠）。
+   - 有 `installed 9a5ba575.0 <- burp.pem` → 注入成功
+   - 有 `openssl not available` → ROM 缺少 openssl：把静态 openssl 放到模块 `tools/`，或安装 BusyBox 模块
+   - 什么都没有 → 模块未执行开机脚本（v1.0 的 customize.sh 缺少 `POSTFSDATA` / `LATESTARTSERVICE` 声明，**重新安装 v1.1 模块**并重启）
+2. root shell 检查证书是否已在系统层：`ls /system/etc/security/cacerts/`（Android 14+ 看 `ls /apex/com.android.conscrypt/cacerts/`）
+   - **root 能看到但 App 不信任** → KernelSU「默认卸载模块」设置会让没有自定义 Profile 的应用隐藏模块挂载：关闭该设置，或为目标应用设置「保留模块挂载」，再重启应用
+   - **root 也看不到** → 检查 KSU 版本是否支持 Android 14+ 的 `/apex` 覆盖
+
+**修改证书后想立即生效，不想重启**
+
+KSU Manager → 模块 → AutoSystemCA → 「执行」，然后强制停止目标应用重开（或重启）。
 
 ## 依赖
 
@@ -87,6 +105,7 @@ AutoSystemCA/
 ├── customize.sh         # 安装时执行
 ├── post-fs-data.sh      # 核心注入逻辑（开机早期执行）
 ├── service.sh           # 开机完成后二次校验（幂等）
+├── action.sh            # KSU Manager「执行」按钮：免重启注入
 ├── certs/               # ← 把证书丢这里
 ├── update.json          # 模块管理器在线更新信息
 ├── build.py             # 本地打包脚本
