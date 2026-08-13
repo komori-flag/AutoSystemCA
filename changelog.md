@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.2
+
+- **流程统一为单一 certs/ 目录**：放入证书 →（无 openssl 时点「执行」转换）→ 重启生效
+- **新增 action.sh 转换**：「执行」按钮把 `certs/` 里的原始证书（DER/PEM）就地转换为最终格式 `<hash>.N` 并即时注入；openssl 支持从系统、Termux、模块 `tools/` 查找
+- **新增预转换直通**：`certs/` 里的 `<hash>.N` 文件开机直接复制进系统信任库，设备端无需 openssl
+- **移除用户存储回退方案**（原方式 B）：避免无筛选地提升所有用户证书
+- 新增 KSU WebUI 使用说明页（`webroot/`）
+- 修复依赖声明后（v1.1）确认开机脚本正常执行，本版解决无 openssl 设备的注入问题
+
 ## v1.1
 
 - **修复**：`customize.sh` 未声明 `POSTFSDATA` / `LATESTARTSERVICE` 标志，导致 KernelSU / Magisk 不执行开机脚本（v1.0 证书从未注入）——现已声明，需重新安装模块

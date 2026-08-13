@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoSystemCA</title>
+<style>
+body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 16px; background: #f5f5f7; color: #1c1c1e; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+.sub { font-size: 13px; color: #666; margin: 0 0 16px; }
+.card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+h2 { font-size: 15px; margin: 0 0 8px; }
+p, li { font-size: 14px; line-height: 1.7; }
+ol, ul { padding-left: 20px; margin: 8px 0; }
+code { background: #eee; padding: 1px 6px; border-radius: 4px; font-size: 13px; word-break: break-all; }
+strong { color: #d32f2f; }
+</style>
+</head>
+<body>
+<h1>AutoSystemCA</h1>
+<p class="sub">开机自动系统 CA 注入模块</p>
+
+<div class="card">
+<h2>使用流程</h2>
+<ol>
+<li>把证书放入<br><code>/data/adb/modules/auto_system_ca/certs/</code></li>
+<li>设备有 openssl：直接<strong>重启</strong>，开机自动转换并注入</li>
+<li>设备无 openssl：点模块的<strong>「执行」</strong>按钮完成转换（需先装 openssl，如 Termux <code>pkg install openssl-tool</code>），或放入电脑预转换好的 <code>&lt;hash&gt;.0</code> 文件</li>
+<li><strong>重启后生效</strong>（或「执行」后强制停止目标应用）</li>
+</ol>
+</div>
+
+<div class="card">
+<h2>检查注入是否成功</h2>
+<p>
+<code>cat /data/adb/modules/auto_system_ca/last-run.log</code><br><br>
+<code>logcat -d | grep AutoSystemCA</code><br><br>
+看到 <code>installed 0f4ed297.0</code> 即成功。
+</p>
+</div>
+
+<div class="card">
+<h2>注意事项</h2>
+<ul>
+<li>只注入 <code>certs/</code> 目录里的证书；删除文件并重启即自动移除</li>
+<li>root 能看到证书但 App 不信任：KernelSU 设置里关闭「默认卸载模块」，或为该应用设置「保留模块挂载」，再重启应用</li>
+<li>Android 14+ 需要较新的 KernelSU 版本以支持 <code>/apex</code> 覆盖</li>
+</ul>
+</div>
+</body>
+</html>

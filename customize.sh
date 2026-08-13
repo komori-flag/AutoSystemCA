@@ -9,7 +9,7 @@ POSTFSDATA=true          # 执行 post-fs-data.sh（开机早期注入证书）
 LATESTARTSERVICE=true    # 执行 service.sh（开机完成后二次校验）
 
 ui_print "*******************************"
-ui_print "   AutoSystemCA v1.1"
+ui_print "   AutoSystemCA v1.2"
 ui_print "*******************************"
 ui_print "- Setting up module files..."
 
@@ -22,6 +22,9 @@ set_perm "$MODPATH/customize.sh" 0 0 0755
 set_perm "$MODPATH/action.sh" 0 0 0755
 
 ui_print "- Done!"
-ui_print "- Drop your certificates into:"
+ui_print "- Put certificates into:"
 ui_print "  /data/adb/modules/auto_system_ca/certs/"
-ui_print "- Then reboot to inject them."
+ui_print "- Then reboot to apply."
+ui_print "- No openssl on the device? Press the"
+ui_print "  module's 'Execute' button once to"
+ui_print "  convert, then reboot."

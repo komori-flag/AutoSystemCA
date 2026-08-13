@@ -15,6 +15,7 @@ FILES = [
     "service.sh",
     "action.sh",
     "certs/README.txt",
+    "webroot/index.html",
     "README.md",
     "changelog.md",
 ]

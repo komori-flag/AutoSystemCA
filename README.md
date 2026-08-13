@@ -1,17 +1,13 @@
-<!--
-  使用前请把下面所有 YOUR_GITHUB_USERNAME 替换为你的 GitHub 用户名
-  （模块管理器在线更新依赖 module.prop 中的 updateJson 和 update.json）
--->
 # AutoSystemCA
 
-![License](https://img.shields.io/github/license/YOUR_GITHUB_USERNAME/AutoSystemCA)
-![Release](https://img.shields.io/github/v/release/YOUR_GITHUB_USERNAME/AutoSystemCA)
+![License](https://img.shields.io/github/license/komori-flag/AutoSystemCA)
+![Release](https://img.shields.io/github/v/release/komori-flag/AutoSystemCA)
 
 KernelSU / Magisk / APatch 开机自动系统 CA 注入模块。
 
 把证书丢进 `certs/` 目录 → 重启 → 证书自动以系统证书身份生效（App 默认信任，可用于 mitmproxy / Charles / Burp 抓包）。
 
-[下载最新版本](https://github.com/YOUR_GITHUB_USERNAME/AutoSystemCA/releases/latest/download/AutoSystemCA.zip)
+[下载最新版本](https://github.com/komori-flag/AutoSystemCA/releases/latest/download/AutoSystemCA.zip)
 
 ## 原理
 
@@ -32,21 +28,31 @@ certs/ 目录 (.crt/.cer/.der/.pem)
 
 ## 使用方法
 
+统一流程：**证书放入 `certs/` → 转换（无 openssl 时需要）→ 重启生效**。
+
 1. 在 KernelSU / Magisk 中安装 `AutoSystemCA.zip`，重启。
 2. 把证书（DER 或 PEM 编码均可）拷贝到：
    ```
    /data/adb/modules/auto_system_ca/certs/
    ```
    支持 `.crt` `.cer` `.der` `.pem`，文件名不要含空格。
-3. 重启生效；或免重启注入：KSU Manager → 模块 → AutoSystemCA → 「执行」（`action.sh`），
-   或 `su -c 'sh /data/adb/modules/auto_system_ca/post-fs-data.sh'`。
-4. 验证：
+3. **转换**（二选一）：
+   - 设备有 openssl：跳过，直接重启——开机自动转换并注入
+   - 设备无 openssl：KSU Manager → 模块 → AutoSystemCA → **「执行」**，完成转换；
+     或放入电脑预转换好的 `<hash>.0` 文件（见下方命令）
+4. **重启生效**（「执行」后也可强制停止目标应用立即生效）。
+5. 验证：
    ```bash
-   ls /system/etc/security/cacerts/ | grep -E '[0-9a-f]{8}\.0'
    logcat -d | grep AutoSystemCA
    ```
-   看到 `installed 9a5ba575.0 <- burp.crt` 即成功。
-5. 删除 `certs/` 里的证书文件并重启，对应证书会自动从系统信任库移除。
+   看到 `installed 0f4ed297.0` 即成功；root 侧可查 `ls /apex/com.android.conscrypt/cacerts/`。
+6. 删除 `certs/` 里的证书文件并重启，对应证书会自动从系统信任库移除。
+
+> **电脑预转换命令**（设备无 openssl 时适用）：
+> ```bash
+> HASH=$(openssl x509 -in your.crt -subject_hash_old -noout)
+> openssl x509 -in your.crt -outform DER -out $HASH.0   # 得到 <hash>.0 文件
+> ```
 
 ## 特性
 
@@ -65,16 +71,16 @@ certs/ 目录 (.crt/.cer/.der/.pem)
 
 1. 确认注入脚本是否运行过：`logcat -d | grep AutoSystemCA`，或查看
    `cat /data/adb/modules/auto_system_ca/last-run.log`（文件日志，开机早期也可靠）。
-   - 有 `installed 9a5ba575.0 <- burp.pem` → 注入成功
-   - 有 `openssl not available` → ROM 缺少 openssl：把静态 openssl 放到模块 `tools/`，或安装 BusyBox 模块
-   - 什么都没有 → 模块未执行开机脚本（v1.0 的 customize.sh 缺少 `POSTFSDATA` / `LATESTARTSERVICE` 声明，**重新安装 v1.1 模块**并重启）
+   - 有 `installed 0f4ed297.0` → 注入成功
+   - 有 `no openssl and no pre-converted files` → 设备无 openssl：点模块「执行」完成转换后重启（需要 openssl：Termux `pkg install openssl-tool`，或把静态 openssl 放入模块 `tools/`）
+   - 什么都没有 → 模块未执行开机脚本（检查模块是否已启用、KSU 版本；曾因 customize.sh 缺少 `POSTFSDATA` / `LATESTARTSERVICE` 声明导致，v1.1 已修复）
 2. root shell 检查证书是否已在系统层：`ls /system/etc/security/cacerts/`（Android 14+ 看 `ls /apex/com.android.conscrypt/cacerts/`）
    - **root 能看到但 App 不信任** → KernelSU「默认卸载模块」设置会让没有自定义 Profile 的应用隐藏模块挂载：关闭该设置，或为目标应用设置「保留模块挂载」，再重启应用
    - **root 也看不到** → 检查 KSU 版本是否支持 Android 14+ 的 `/apex` 覆盖
 
 **修改证书后想立即生效，不想重启**
 
-KSU Manager → 模块 → AutoSystemCA → 「执行」，然后强制停止目标应用重开（或重启）。
+KSU Manager → 模块 → AutoSystemCA → 「执行」（先转换再注入），然后强制停止目标应用重开（或重启）。
 
 ## 依赖
 
@@ -87,12 +93,12 @@ KSU Manager → 模块 → AutoSystemCA → 「执行」，然后强制停止目
 
 - 仓库每打一个 `v*` 的 tag，[GitHub Actions](.github/workflows/release.yml) 会自动构建 `AutoSystemCA.zip` 并发布到 Release
 - 模块管理器读取 [update.json](update.json) 里的 `zipUrl` 完成下载更新
-- 前提：把 `module.prop` 和 `update.json` 中的 `YOUR_GITHUB_USERNAME` 替换为你的 GitHub 用户名
+- 前提：把 `module.prop` 和 `update.json` 中的 `komori-flag` 替换为你的 GitHub 用户名
 
 ## 从源码构建
 
 ```bash
-git clone https://github.com/YOUR_GITHUB_USERNAME/AutoSystemCA.git
+git clone https://github.com/komori-flag/AutoSystemCA.git
 cd AutoSystemCA
 python build.py        # 生成 AutoSystemCA.zip
 ```
@@ -105,7 +111,8 @@ AutoSystemCA/
 ├── customize.sh         # 安装时执行
 ├── post-fs-data.sh      # 核心注入逻辑（开机早期执行）
 ├── service.sh           # 开机完成后二次校验（幂等）
-├── action.sh            # KSU Manager「执行」按钮：免重启注入
+├── action.sh            # KSU Manager「执行」按钮：转换 + 注入
+├── webroot/             # KSU 模块 WebUI（使用说明/排查）
 ├── certs/               # ← 把证书丢这里
 ├── update.json          # 模块管理器在线更新信息
 ├── build.py             # 本地打包脚本
