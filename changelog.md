@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.3
+
+- **新增 bind mount 注入**：不依赖 KSU magic mount / metamodule（KernelSU 3.0+ 已移除内置挂载，未装 metamodule 时无任何模块挂载生效）。开机时先把真实信任库内容合并进模块目录（bind mount 是整目录替换，避免隐藏系统证书），再 `mount --bind` 到真实路径（system + apex 双目标）
+- **自适应**：路径已被 metamodule（如 meta-overlayfs）挂载时自动跳过 bind，两者不冲突
+- 挂载幂等：已挂载路径跳过；重启后自动重建，卸载模块后自动消失；真实 /system 永不修改
+
 ## v1.2.2
 
 - **日志提示修正**：已转换文件存在且注入完成时，不再打印误导性的 `no openssl and no pre-converted files` 提示；仅当真的没有任何可注入内容时才提示（附 openssl 安装指引）

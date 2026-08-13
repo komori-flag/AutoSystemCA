@@ -16,14 +16,16 @@ certs/ 目录 (.crt/.cer/.der/.pem)
    ↓ post-fs-data.sh（开机早期，zygote 启动前）
    ↓ openssl 自动识别 DER/PEM → 转 PEM → 计算 subject_hash_old
    ↓ 转 DER → 按 <hash>.N 命名
+   ↓ 合并真实信任库内容到模块目录（不隐藏系统证书）
    ↓ 写入模块 system/ 覆盖目录：
    │   ├─ system/etc/security/cacerts/            （Android 7-13）
    │   └─ system/apex/com.android.conscrypt/cacerts/ （Android 14+）
-   ↓ Root 管理器 magic mount 覆盖真实系统路径
+   ↓ bind mount 到真实系统路径（路径已被 metamodule 挂载则自动跳过）
    ↓ Android Framework 加载 → 证书生效
 ```
 
-- **不修改真实 /system**：OTA 安全、卸载模块即完全恢复。
+- **不修改真实 /system**：bind mount 重启即消失、OTA 安全、卸载模块即完全恢复。
+- 注入使用 `mount --bind`，**不依赖 KSU magic mount**（KernelSU 3.0+ 已移除内置挂载，需要 metamodule 如 meta-overlayfs；无 metamodule 或挂载失效时 bind mount 兜底生效）。
 - Android 14+ 的系统 CA 存储位于 `/apex/com.android.conscrypt/cacerts`，脚本会自动检测并同时覆盖两个位置（`/system/etc/security/cacerts` 若为指向 apex 的软链则只注入 apex）。
 
 ## 使用方法

@@ -2,21 +2,28 @@
 # AutoSystemCA - boot-time system CA injector (KernelSU / Magisk / APatch)
 #
 # Single flow: drop certificates into $MODDIR/certs/ and reboot.
+# Directory layout:
+#   certs/      raw certificates, kept as-is
+#   converted/  <subject_hash_old>.N files - produced by the module
+#               action (Execute) or converted with openssl on a PC
+#
 # At boot this script:
-#   1. copies pre-converted files (named <subject_hash_old>.N, e.g.
-#      0f4ed297.0 - converted with openssl on a PC or by the module
-#      action) into the system overlay - no openssl needed
-#   2. if openssl is available, additionally converts raw
-#      .crt/.cer/.der/.pem files (DER/PEM auto-detect) and injects them
+#   1. merges the real trust store into the module staging dirs so the
+#      overlay never hides the original system certificates
+#   2. copies converted files from converted/ (and pre-converted
+#      <hash>.N files dropped into certs/) into the staging dirs
+#   3. if openssl is available, converts raw .crt/.cer/.der/.pem files
+#      (DER/PEM auto-detect) and injects them too
+#   4. bind-mounts the merged staging dirs over the real trust-store
+#      paths (system + apex). bind mount does NOT depend on KSU magic
+#      mount, which is unreliable on HyperOS/MIUI and some KSU builds.
 #
 # Devices without openssl: run the module action once (KernelSU
 # Manager -> module -> Execute) to convert certs/ files into <hash>.N,
-# then reboot - the boot script then only copies them (step 1).
+# then reboot - the boot script then only copies them (step 2).
 #
-# Injection targets (module overlay, NOT /system): system/etc/security/
-# cacerts and, on Android 14+, system/apex/com.android.conscrypt/cacerts.
-# The real /system is never modified: OTA-safe and fully removed when
-# the module is uninstalled.
+# The real /system is never modified: bind mounts vanish on reboot,
+# module uninstall removes the staging dirs - OTA-safe.
 #
 # Debug: logcat | grep AutoSystemCA  /  cat $MODDIR/last-run.log
 
@@ -40,6 +47,15 @@ log_i() {
     echo "$(date '+%m-%d %H:%M:%S') $1" >> "$LOG_FILE" 2>/dev/null
 }
 
+# fix SELinux context so the trust manager can read the file
+fix_ctx() {
+    if command -v chcon >/dev/null 2>&1; then
+        chcon u:object_r:system_file:s0 "$1" 2>/dev/null
+    elif [ -x /system/bin/toybox ]; then
+        /system/bin/toybox chcon u:object_r:system_file:s0 "$1" 2>/dev/null
+    fi
+}
+
 mkdir -p "$CERT_DIR" "$CONVERTED_DIR" "$TMP_DIR"
 
 log_i "post-fs-data.sh started"
@@ -55,22 +71,48 @@ if [ -z "$OPENSSL" ] && [ -x "$MODDIR/tools/openssl" ]; then
 fi
 
 # ------------------------------------------------------------------
-# 2. resolve trust-store targets (module overlay paths, NOT /system!)
-#    Android 14+: /system/etc/security/cacerts is a symlink to the
-#    apex store, so inject into the apex overlay instead.
+# 2. resolve trust-store pairs "staging|real"
+#    Android 14+: /system/etc/security/cacerts may be a symlink to the
+#    apex store - then only the apex pair is used.
 # ------------------------------------------------------------------
-TARGETS=""
+PAIRS=""
 if [ -d /apex/com.android.conscrypt/cacerts ]; then
-    TARGETS="$MOD_SYSTEM/apex/com.android.conscrypt/cacerts"
+    PAIRS="$MOD_SYSTEM/apex/com.android.conscrypt/cacerts|/apex/com.android.conscrypt/cacerts"
     if [ ! -L /system/etc/security/cacerts ]; then
-        TARGETS="$TARGETS $MOD_SYSTEM/etc/security/cacerts"
+        PAIRS="$PAIRS $MOD_SYSTEM/etc/security/cacerts|/system/etc/security/cacerts"
     fi
 else
-    TARGETS="$MOD_SYSTEM/etc/security/cacerts"
+    PAIRS="$MOD_SYSTEM/etc/security/cacerts|/system/etc/security/cacerts"
 fi
 
+# staging dirs only (used by cleanup / pass-through / conversion)
+TARGETS=""
+for p in $PAIRS; do
+    TARGETS="$TARGETS ${p%|*}"
+done
+
 # ------------------------------------------------------------------
-# 3. prune converted/: remove converted files whose original
+# 3. merge: copy stock certificates from the real store into the
+#    staging dirs, so the overlay/bind never hides the originals
+# ------------------------------------------------------------------
+for p in $PAIRS; do
+    staging="${p%|*}"; real="${p#*|}"
+    mkdir -p "$staging"
+    [ -d "$real" ] || continue
+    for f in "$real"/*; do
+        [ -f "$f" ] || continue
+        name=$(basename "$f")
+        if [ ! -f "$staging/$name" ]; then
+            cp "$f" "$staging/$name"
+            chmod 0644 "$staging/$name"
+            chown 0:0 "$staging/$name"
+            fix_ctx "$staging/$name"
+        fi
+    done
+done
+
+# ------------------------------------------------------------------
+# 4. prune converted/: remove converted files whose original
 #    certificate has been deleted from certs/ (per mapping.txt)
 # ------------------------------------------------------------------
 if [ -f "$CONVERTED_DIR/mapping.txt" ]; then
@@ -85,7 +127,7 @@ if [ -f "$CONVERTED_DIR/mapping.txt" ]; then
 fi
 
 # ------------------------------------------------------------------
-# 4. cleanup: remove previously installed hashes whose source
+# 5. cleanup: remove previously installed hashes whose source
 #    certificate file has been deleted from certs/ or converted/
 # ------------------------------------------------------------------
 if [ -f "$MANIFEST" ]; then
@@ -106,11 +148,11 @@ fi
 FOUND_CONVERTED=0
 
 # ------------------------------------------------------------------
-# 5. converted certificates (no openssl needed)
+# 6. converted certificates (no openssl needed)
 #    Files named <subject_hash_old>.N (e.g. 0f4ed297.0) are already in
 #    the final trust-store format - produced by the module action into
 #    converted/, or converted with openssl on a PC and dropped into
-#    converted/ or certs/. Just copy them into the overlay as-is.
+#    converted/ or certs/. Just copy them into the staging dirs.
 #    Traceability: converted/mapping.txt records "hash.N|original",
 #    and every install is logged as "installed <hash.N> <- <original>".
 # ------------------------------------------------------------------
@@ -143,12 +185,7 @@ for dir in "$CONVERTED_DIR" "$CERT_DIR"; do
             cp "$src" "$t/$name"
             chmod 0644 "$t/$name"
             chown 0:0 "$t/$name"
-            # fix SELinux context so the trust manager can read it
-            if command -v chcon >/dev/null 2>&1; then
-                chcon u:object_r:system_file:s0 "$t/$name" 2>/dev/null
-            elif [ -x /system/bin/toybox ]; then
-                /system/bin/toybox chcon u:object_r:system_file:s0 "$t/$name" 2>/dev/null
-            fi
+            fix_ctx "$t/$name"
             log_i "installed $name <- $src_name"
         done
         echo "$name|$src_name" >> "$MANIFEST.tmp"
@@ -156,7 +193,7 @@ for dir in "$CONVERTED_DIR" "$CERT_DIR"; do
 done
 
 # ------------------------------------------------------------------
-# 6. openssl conversion path (only when openssl is available)
+# 7. openssl conversion path (only when openssl is available)
 # ------------------------------------------------------------------
 if [ -n "$OPENSSL" ]; then
     for src in "$CERT_DIR"/*; do
@@ -198,12 +235,7 @@ if [ -n "$OPENSSL" ]; then
                     cp "$DER" "$target"
                     chmod 0644 "$target"
                     chown 0:0 "$target"
-                    # fix SELinux context so the trust manager can read it
-                    if command -v chcon >/dev/null 2>&1; then
-                        chcon u:object_r:system_file:s0 "$target" 2>/dev/null
-                    elif [ -x /system/bin/toybox ]; then
-                        /system/bin/toybox chcon u:object_r:system_file:s0 "$target" 2>/dev/null
-                    fi
+                    fix_ctx "$target"
                     [ -z "$index" ] && index="$HASH.$n"
                     break
                 elif cmp -s "$DER" "$target"; then
@@ -227,5 +259,25 @@ elif [ "$FOUND_CONVERTED" -eq 0 ]; then
 fi
 
 [ -f "$MANIFEST.tmp" ] && mv -f "$MANIFEST.tmp" "$MANIFEST"
+
+# ------------------------------------------------------------------
+# 8. bind-mount the merged staging dirs over the real trust-store
+#    paths. Independent of KSU magic mount (unreliable on HyperOS).
+#    Idempotent: skips paths that are already mounted.
+# ------------------------------------------------------------------
+for p in $PAIRS; do
+    staging="${p%|*}"; real="${p#*|}"
+    [ -d "$staging" ] || continue
+    [ -d "$real" ] || continue
+    if mount | grep -q " $real "; then
+        log_i "already mounted: $real"
+        continue
+    fi
+    if mount --bind "$staging" "$real" 2>/dev/null; then
+        log_i "bind-mounted $staging -> $real"
+    else
+        log_i "bind mount failed: $real"
+    fi
+done
 
 log_i "finished"
