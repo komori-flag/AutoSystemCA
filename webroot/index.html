@@ -23,11 +23,12 @@ strong { color: #d32f2f; }
 <div class="card">
 <h2>使用流程</h2>
 <ol>
-<li>把证书放入<br><code>/data/adb/modules/auto_system_ca/certs/</code></li>
+<li>把原始证书放入<br><code>/data/adb/modules/auto_system_ca/certs/</code>（原文件保留）</li>
 <li>设备有 openssl：直接<strong>重启</strong>，开机自动转换并注入</li>
-<li>设备无 openssl：点模块的<strong>「执行」</strong>按钮完成转换（需先装 openssl，如 Termux <code>pkg install openssl-tool</code>），或放入电脑预转换好的 <code>&lt;hash&gt;.0</code> 文件</li>
+<li>设备无 openssl：点模块的<strong>「执行」</strong>按钮完成转换（需先装 openssl，如 Termux <code>pkg install openssl-tool</code>），转换产物输出到 <code>converted/</code>；或放入电脑预转换好的 <code>&lt;hash&gt;.0</code> 文件</li>
 <li><strong>重启后生效</strong>（或「执行」后强制停止目标应用）</li>
 </ol>
+<p>转换来源映射：<code>cat .../converted/mapping.txt</code>（格式 <code>hash.N|原始文件名</code>）</p>
 </div>
 
 <div class="card">

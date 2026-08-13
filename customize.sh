@@ -3,6 +3,9 @@
 
 # 模块管理器约定：customize.sh 存在时必须显式声明这些标志位，
 # 否则不会执行模块的 post-fs-data.sh / service.sh（v1.1 修复项）
+# 这些变量由 Magisk/KernelSU/APatch 管理器在 source 本脚本后读取，
+# 本脚本内不使用 —— ShellCheck 报 SC2034 是预期的，故屏蔽。
+# shellcheck disable=SC2034
 SKIPMOUNT=false          # 不禁用 magic mount
 PROPFILE=false           # 不修改 system props
 POSTFSDATA=true          # 执行 post-fs-data.sh（开机早期注入证书）
@@ -13,7 +16,7 @@ ui_print "   AutoSystemCA v1.2"
 ui_print "*******************************"
 ui_print "- Setting up module files..."
 
-mkdir -p "$MODPATH/certs"
+mkdir -p "$MODPATH/certs" "$MODPATH/converted"
 
 set_perm_recursive "$MODPATH" 0 0 0755 0644
 set_perm "$MODPATH/post-fs-data.sh" 0 0 0755
@@ -24,7 +27,6 @@ set_perm "$MODPATH/action.sh" 0 0 0755
 ui_print "- Done!"
 ui_print "- Put certificates into:"
 ui_print "  /data/adb/modules/auto_system_ca/certs/"
+ui_print "- Press 'Execute' to convert them into"
+ui_print "  converted/ (originals are kept)."
 ui_print "- Then reboot to apply."
-ui_print "- No openssl on the device? Press the"
-ui_print "  module's 'Execute' button once to"
-ui_print "  convert, then reboot."

@@ -2,9 +2,11 @@
 # AutoSystemCA - on-demand convert + inject (KernelSU Manager -> Execute)
 #
 # 1. converts raw certificates in certs/ (.crt/.cer/.der/.pem, DER/PEM)
-#    into the final trust-store files <subject_hash_old>.N (in place,
-#    the originals are replaced by the converted files)
-# 2. injects them into the system trust store immediately
+#    into the final trust-store files <subject_hash_old>.N in
+#    converted/ - the originals in certs/ are KEPT
+# 2. rebuilds converted/mapping.txt ("hash.N|original-name") so the
+#    origin of every converted file stays traceable
+# 3. injects the converted files into the system trust store
 #
 # After converting, reboot (or force-stop the target app) for the
 # certificates to become effective.
@@ -15,6 +17,7 @@
 
 MODDIR=$(cd "$(dirname "$0")" && pwd)
 CERT_DIR="$MODDIR/certs"
+CONVERTED_DIR="$MODDIR/converted"
 LOG_FILE="$MODDIR/last-run.log"
 TMP_DIR=/data/local/tmp/auto_system_ca
 
@@ -23,7 +26,7 @@ log_i() {
     echo "$(date '+%m-%d %H:%M:%S') $1" >> "$LOG_FILE" 2>/dev/null
 }
 
-mkdir -p "$CERT_DIR" "$TMP_DIR"
+mkdir -p "$CERT_DIR" "$CONVERTED_DIR" "$TMP_DIR"
 
 log_i "action: started"
 
@@ -34,7 +37,10 @@ OPENSSL=$(command -v openssl 2>/dev/null)
 [ -z "$OPENSSL" ] && [ -x "$MODDIR/tools/openssl" ] && OPENSSL="$MODDIR/tools/openssl"
 [ -z "$OPENSSL" ] && [ -x /data/data/com.termux/files/usr/bin/openssl ] && OPENSSL=/data/data/com.termux/files/usr/bin/openssl
 
-if [ -n "$OPENSSL" ]; then
+if [ -z "$OPENSSL" ]; then
+    log_i "action: openssl not found - install it (Termux: pkg install openssl-tool), or drop pre-converted <hash>.0 files into converted/"
+else
+    : > "$CONVERTED_DIR/mapping.txt.tmp"
     for src in "$CERT_DIR"/*; do
         [ -f "$src" ] || continue
         name=$(basename "$src")
@@ -61,23 +67,24 @@ if [ -n "$OPENSSL" ]; then
         "$OPENSSL" x509 -in "$PEM" -outform DER -out "$DER" 2>/dev/null
         [ -f "$DER" ] || { log_i "action: failed to convert $name"; continue; }
 
-        # convert in place: raw file -> <hash>.N, skipping identical ones
+        # write converted/<hash>.N, keep the original in certs/
         idx=0
-        while [ -f "$CERT_DIR/$HASH.$idx" ]; do
-            cmp -s "$DER" "$CERT_DIR/$HASH.$idx" && break
+        while [ -f "$CONVERTED_DIR/$HASH.$idx" ]; do
+            cmp -s "$DER" "$CONVERTED_DIR/$HASH.$idx" && break
             idx=$((idx + 1))
         done
-        if ! cmp -s "$DER" "$CERT_DIR/$HASH.$idx" 2>/dev/null; then
-            cp "$DER" "$CERT_DIR/$HASH.$idx"
-            log_i "action: converted $name -> $HASH.$idx"
+        if ! cmp -s "$DER" "$CONVERTED_DIR/$HASH.$idx" 2>/dev/null; then
+            cp "$DER" "$CONVERTED_DIR/$HASH.$idx"
+            log_i "action: converted $name -> converted/$HASH.$idx"
+        else
+            log_i "action: $name already converted (converted/$HASH.$idx)"
         fi
-        rm -f "$src"
+        echo "$HASH.$idx|$name" >> "$CONVERTED_DIR/mapping.txt.tmp"
     done
-else
-    log_i "action: openssl not found - install it (Termux: pkg install openssl-tool), or drop pre-converted <hash>.0 files into certs/"
+    [ -f "$CONVERTED_DIR/mapping.txt.tmp" ] && mv -f "$CONVERTED_DIR/mapping.txt.tmp" "$CONVERTED_DIR/mapping.txt"
 fi
 
-# inject now (pre-converted pass-through; needs no openssl)
+# inject now (converted pass-through; needs no openssl)
 [ -f "$MODDIR/post-fs-data.sh" ] && sh "$MODDIR/post-fs-data.sh"
 
 log_i "action: done - reboot (or force-stop the target app) for the certificates to take effect"

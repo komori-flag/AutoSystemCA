@@ -38,9 +38,10 @@ certs/ 目录 (.crt/.cer/.der/.pem)
    支持 `.crt` `.cer` `.der` `.pem`，文件名不要含空格。
 3. **转换**（二选一）：
    - 设备有 openssl：跳过，直接重启——开机自动转换并注入
-   - 设备无 openssl：KSU Manager → 模块 → AutoSystemCA → **「执行」**，完成转换；
-     或放入电脑预转换好的 `<hash>.0` 文件（见下方命令）
+   - 设备无 openssl：KSU Manager → 模块 → AutoSystemCA → **「执行」**，转换产物输出到
+     `converted/`（原始文件保留）；或放入电脑预转换好的 `<hash>.0` 文件到 `converted/`（见下方命令）
 4. **重启生效**（「执行」后也可强制停止目标应用立即生效）。
+   - 查看转换来源：`cat /data/adb/modules/auto_system_ca/converted/mapping.txt`（格式 `hash.N|原始文件名`）
 5. 验证：
    ```bash
    logcat -d | grep AutoSystemCA
@@ -113,7 +114,8 @@ AutoSystemCA/
 ├── service.sh           # 开机完成后二次校验（幂等）
 ├── action.sh            # KSU Manager「执行」按钮：转换 + 注入
 ├── webroot/             # KSU 模块 WebUI（使用说明/排查）
-├── certs/               # ← 把证书丢这里
+├── certs/               # ← 原始证书放这里（保留不动）
+├── converted/           # 「执行」转换后的 <hash>.N 文件 + mapping.txt 来源映射
 ├── update.json          # 模块管理器在线更新信息
 ├── build.py             # 本地打包脚本
 ├── changelog.md         # 更新日志

@@ -24,6 +24,7 @@ MODDIR=${0%/*}
 
 LOG_TAG=AutoSystemCA
 CERT_DIR="$MODDIR/certs"
+CONVERTED_DIR="$MODDIR/converted"
 LOG_FILE="$MODDIR/last-run.log"
 MOD_SYSTEM="$MODDIR/system"
 MANIFEST="$MODDIR/.installed.list"
@@ -39,7 +40,7 @@ log_i() {
     echo "$(date '+%m-%d %H:%M:%S') $1" >> "$LOG_FILE" 2>/dev/null
 }
 
-mkdir -p "$CERT_DIR" "$TMP_DIR"
+mkdir -p "$CERT_DIR" "$CONVERTED_DIR" "$TMP_DIR"
 
 log_i "post-fs-data.sh started"
 
@@ -69,13 +70,28 @@ else
 fi
 
 # ------------------------------------------------------------------
-# 3. cleanup: remove previously installed hashes whose source
-#    certificate file has been deleted from certs/
+# 3. prune converted/: remove converted files whose original
+#    certificate has been deleted from certs/ (per mapping.txt)
+# ------------------------------------------------------------------
+if [ -f "$CONVERTED_DIR/mapping.txt" ]; then
+    while IFS='|' read -r map_hash map_raw; do
+        [ -n "$map_hash" ] || continue
+        [ -f "$CERT_DIR/$map_raw" ] && continue
+        if [ -f "$CONVERTED_DIR/$map_hash" ]; then
+            rm -f "$CONVERTED_DIR/$map_hash"
+            log_i "pruned converted/$map_hash (source $map_raw deleted)"
+        fi
+    done < "$CONVERTED_DIR/mapping.txt"
+fi
+
+# ------------------------------------------------------------------
+# 4. cleanup: remove previously installed hashes whose source
+#    certificate file has been deleted from certs/ or converted/
 # ------------------------------------------------------------------
 if [ -f "$MANIFEST" ]; then
     while IFS='|' read -r installed_name src_name; do
         [ -n "$installed_name" ] || continue
-        [ -f "$CERT_DIR/$src_name" ] && continue
+        { [ -f "$CERT_DIR/$src_name" ] || [ -f "$CONVERTED_DIR/$src_name" ]; } && continue
         for t in $TARGETS; do
             [ -f "$t/$installed_name" ] && rm -f "$t/$installed_name"
         done
@@ -87,41 +103,56 @@ fi
 : > "$MANIFEST.tmp"
 
 # ------------------------------------------------------------------
-# 4. pre-converted certificates (no openssl needed)
+# 5. converted certificates (no openssl needed)
 #    Files named <subject_hash_old>.N (e.g. 0f4ed297.0) are already in
-#    the final trust-store format - converted with openssl on a PC or
-#    by the module action. Just copy them into the overlay as-is.
+#    the final trust-store format - produced by the module action into
+#    converted/, or converted with openssl on a PC and dropped into
+#    converted/ or certs/. Just copy them into the overlay as-is.
+#    Traceability: converted/mapping.txt records "hash.N|original",
+#    and every install is logged as "installed <hash.N> <- <original>".
 # ------------------------------------------------------------------
-for src in "$CERT_DIR"/*; do
-    [ -f "$src" ] || continue
-    name=$(basename "$src")
-    case "$name" in
-        [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].[0-9]|[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].[0-9][0-9]) ;;
-        *) continue ;;
-    esac
-    for t in $TARGETS; do
-        mkdir -p "$t"
-        if [ -f "$t/$name" ]; then
-            cmp -s "$src" "$t/$name" && continue
-            log_i "skip $name (target occupied by a different cert)"
-            continue
+for dir in "$CONVERTED_DIR" "$CERT_DIR"; do
+    [ -d "$dir" ] || continue
+    for src in "$dir"/*; do
+        [ -f "$src" ] || continue
+        name=$(basename "$src")
+        case "$name" in
+            [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].[0-9]|[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].[0-9][0-9]) ;;
+            *) continue ;;
+        esac
+
+        # look up the original source file in converted/mapping.txt
+        src_name="$name"
+        if [ -f "$CONVERTED_DIR/mapping.txt" ]; then
+            while IFS='|' read -r map_hash map_raw; do
+                [ "$map_hash" = "$name" ] && src_name="$map_raw"
+            done < "$CONVERTED_DIR/mapping.txt"
         fi
-        cp "$src" "$t/$name"
-        chmod 0644 "$t/$name"
-        chown 0:0 "$t/$name"
-        # fix SELinux context so the trust manager can read it
-        if command -v chcon >/dev/null 2>&1; then
-            chcon u:object_r:system_file:s0 "$t/$name" 2>/dev/null
-        elif [ -x /system/bin/toybox ]; then
-            /system/bin/toybox chcon u:object_r:system_file:s0 "$t/$name" 2>/dev/null
-        fi
-        log_i "installed $name"
+
+        for t in $TARGETS; do
+            mkdir -p "$t"
+            if [ -f "$t/$name" ]; then
+                cmp -s "$src" "$t/$name" && continue
+                log_i "skip $name (target occupied by a different cert)"
+                continue
+            fi
+            cp "$src" "$t/$name"
+            chmod 0644 "$t/$name"
+            chown 0:0 "$t/$name"
+            # fix SELinux context so the trust manager can read it
+            if command -v chcon >/dev/null 2>&1; then
+                chcon u:object_r:system_file:s0 "$t/$name" 2>/dev/null
+            elif [ -x /system/bin/toybox ]; then
+                /system/bin/toybox chcon u:object_r:system_file:s0 "$t/$name" 2>/dev/null
+            fi
+            log_i "installed $name <- $src_name"
+        done
+        echo "$name|$src_name" >> "$MANIFEST.tmp"
     done
-    echo "$name|$name" >> "$MANIFEST.tmp"
 done
 
 # ------------------------------------------------------------------
-# 5. openssl conversion path (only when openssl is available)
+# 6. openssl conversion path (only when openssl is available)
 # ------------------------------------------------------------------
 if [ -n "$OPENSSL" ]; then
     for src in "$CERT_DIR"/*; do
