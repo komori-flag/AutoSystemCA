@@ -1,6 +1,6 @@
 {
-  "version": "v1.2.1",
-  "versionCode": 4,
+  "version": "v1.2.2",
+  "versionCode": 5,
   "zipUrl": "https://github.com/YOUR_GITHUB_USERNAME/AutoSystemCA/releases/latest/download/AutoSystemCA.zip",
   "changelog": "https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/AutoSystemCA/main/changelog.md"
 }

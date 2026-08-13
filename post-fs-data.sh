@@ -102,6 +102,9 @@ fi
 # 本次运行安装清单
 : > "$MANIFEST.tmp"
 
+# 标记本节是否处理到已转换文件（用于末尾的提示信息）
+FOUND_CONVERTED=0
+
 # ------------------------------------------------------------------
 # 5. converted certificates (no openssl needed)
 #    Files named <subject_hash_old>.N (e.g. 0f4ed297.0) are already in
@@ -120,6 +123,7 @@ for dir in "$CONVERTED_DIR" "$CERT_DIR"; do
             [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].[0-9]|[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].[0-9][0-9]) ;;
             *) continue ;;
         esac
+        FOUND_CONVERTED=1
 
         # look up the original source file in converted/mapping.txt
         src_name="$name"
@@ -218,8 +222,8 @@ if [ -n "$OPENSSL" ]; then
             log_i "installed $index <- $name"
         fi
     done
-else
-    log_i "no openssl and no pre-converted files - run the module action (Execute) once to convert certificates, then reboot"
+elif [ "$FOUND_CONVERTED" -eq 0 ]; then
+    log_i "no openssl and no converted files - install openssl (Termux: pkg install openssl-tool), press the module 'Execute' button to convert, then reboot"
 fi
 
 [ -f "$MANIFEST.tmp" ] && mv -f "$MANIFEST.tmp" "$MANIFEST"

@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.2.2
+
+- **日志提示修正**：已转换文件存在且注入完成时，不再打印误导性的 `no openssl and no pre-converted files` 提示；仅当真的没有任何可注入内容时才提示（附 openssl 安装指引）
+
 ## v1.2.1
 
 - **转换产物移入独立 `converted/` 目录**：`certs/` 里的原始证书保留不动
