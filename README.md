@@ -14,8 +14,8 @@ KernelSU / Magisk / APatch 开机自动系统 CA 注入模块。
 ```
 certs/ 目录 (.crt/.cer/.der/.pem)
    ↓ post-fs-data.sh（开机早期，zygote 启动前）
-   ↓ openssl 自动识别 DER/PEM → 转 PEM → 计算 subject_hash_old
-   ↓ 转 DER → 按 <hash>.N 命名
+   ↓ openssl 自动识别 DER/PEM → 统一为 PEM → 计算 subject_hash_old
+   ↓ 按 <hash>.N 命名（PEM + 信息转储，与系统自带证书同布局）
    ↓ 合并真实信任库内容到模块目录（不隐藏系统证书）
    ↓ 写入模块 system/ 覆盖目录：
    │   ├─ system/etc/security/cacerts/            （Android 7-13）
@@ -54,7 +54,8 @@ certs/ 目录 (.crt/.cer/.der/.pem)
 > **电脑预转换命令**（设备无 openssl 时适用）：
 > ```bash
 > HASH=$(openssl x509 -in your.crt -subject_hash_old -noout)
-> openssl x509 -in your.crt -outform DER -out $HASH.0   # 得到 <hash>.0 文件
+> openssl x509 -in your.crt -out $HASH.0                          # PEM 编码的 <hash>.0
+> openssl x509 -in $HASH.0 -text -fingerprint -noout >> $HASH.0   # 附加信息转储（与系统文件同布局）
 > ```
 
 ## 特性
@@ -62,7 +63,7 @@ certs/ 目录 (.crt/.cer/.der/.pem)
 - DER / PEM 自动识别，无需手动转换
 - 按 `subject_hash_old` 生成 Android 标准文件名 `hash.0`
 - hash 冲突自动使用 `.0/.1/.2...` 递增后缀
-- 输出严格为 DER 编码（系统信任库要求，与 MoveCertificate 一致）
+- 输出与系统一致：PEM 证书块 + `openssl -text -fingerprint` 信息转储（与设备自带 `system/etc/security/cacerts/` 的 `<hash>.N` 同布局；Android 只解析首个证书块，转储被忽略，PEM/DER 均能解析）
 - 权限 0644、属主 0:0、SELinux context 修复（`u:object_r:system_file:s0`）
 - 清单驱动的自动清理：源文件删除后重启自动移除对应证书
 - Android 7~16 自动适配 system / apex 双路径

@@ -13,7 +13,8 @@
 #   2. copies converted files from converted/ (and pre-converted
 #      <hash>.N files dropped into certs/) into the staging dirs
 #   3. if openssl is available, converts raw .crt/.cer/.der/.pem files
-#      (DER/PEM auto-detect) and injects them too
+#      (DER/PEM auto-detect, normalized to PEM + trailing text dump,
+#      matching the stock store layout) and injects them too
 #   4. bind-mounts the merged staging dirs over the real trust-store
 #      paths (system + apex). bind mount does NOT depend on KSU magic
 #      mount, which is unreliable on HyperOS/MIUI and some KSU builds.
@@ -205,10 +206,11 @@ if [ -n "$OPENSSL" ]; then
         esac
 
         PEM="$TMP_DIR/$name.pem"
-        DER="$TMP_DIR/$name.der"
-        rm -f "$PEM" "$DER"
+        rm -f "$PEM"
 
-        # auto-detect DER vs PEM encoding
+        # auto-detect DER vs PEM encoding, normalize to PEM - the stock
+        # trust store ships PEM (e.g. /system/etc/security/cacerts/*.0)
+        # and Android parses both, so match the device's own format
         if grep -q "BEGIN CERTIFICATE" "$src" 2>/dev/null; then
             cp "$src" "$PEM"
         else
@@ -219,9 +221,10 @@ if [ -n "$OPENSSL" ]; then
         HASH=$("$OPENSSL" x509 -subject_hash_old -in "$PEM" -noout 2>/dev/null)
         [ -n "$HASH" ] || { log_i "not a valid certificate (no subject hash): $name"; continue; }
 
-        # the system trust store requires DER content, not PEM
-        "$OPENSSL" x509 -in "$PEM" -outform DER -out "$DER" 2>/dev/null
-        [ -f "$DER" ] || { log_i "failed to convert to DER: $name"; continue; }
+        # append an openssl -text -fingerprint dump after the PEM block,
+        # same layout as the stock system certificate files (Android
+        # ignores everything after the first certificate block)
+        "$OPENSSL" x509 -in "$PEM" -text -fingerprint -noout >> "$PEM" 2>/dev/null
 
         log_i "processing $name (hash $HASH)"
 
@@ -232,13 +235,13 @@ if [ -n "$OPENSSL" ]; then
             while [ "$n" -lt 100 ]; do
                 target="$t/$HASH.$n"
                 if [ ! -f "$target" ]; then
-                    cp "$DER" "$target"
+                    cp "$PEM" "$target"
                     chmod 0644 "$target"
                     chown 0:0 "$target"
                     fix_ctx "$target"
                     [ -z "$index" ] && index="$HASH.$n"
                     break
-                elif cmp -s "$DER" "$target"; then
+                elif cmp -s "$PEM" "$target"; then
                     # identical certificate already installed at this index
                     [ -z "$index" ] && index="$HASH.$n"
                     break

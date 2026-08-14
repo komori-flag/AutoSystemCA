@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.4
+
+- **转换输出与系统证书同布局**：遍历设备系统信任库（如 `7d453d8f.0`）确认自带证书为「PEM 证书块 + `openssl -text -fingerprint` 信息转储」，转换产物由 DER 改为与之完全一致的格式（Android 只解析首个证书块，转储被忽略；`subject_hash_old` 命名不变，旧 DER 转换文件依然有效）
+- 注意：已存在的旧版 `converted/` 文件（无转储）与新产物字节不同，下次转换会写入下一个 `.N` 索引，二者并存无副作用
+
 ## v1.3
 
 - **新增 bind mount 注入**：不依赖 KSU magic mount / metamodule（KernelSU 3.0+ 已移除内置挂载，未装 metamodule 时无任何模块挂载生效）。开机时先把真实信任库内容合并进模块目录（bind mount 是整目录替换，避免隐藏系统证书），再 `mount --bind` 到真实路径（system + apex 双目标）

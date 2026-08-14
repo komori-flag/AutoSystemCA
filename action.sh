@@ -2,8 +2,9 @@
 # AutoSystemCA - on-demand convert + inject (KernelSU Manager -> Execute)
 #
 # 1. converts raw certificates in certs/ (.crt/.cer/.der/.pem, DER/PEM)
-#    into the final trust-store files <subject_hash_old>.N in
-#    converted/ - the originals in certs/ are KEPT
+#    into the final trust-store files <subject_hash_old>.N (PEM-encoded
+#    + trailing text dump, matching the stock store layout) in
+#    converted/ - the originals are KEPT
 # 2. rebuilds converted/mapping.txt ("hash.N|original-name") so the
 #    origin of every converted file stays traceable
 # 3. injects the converted files into the system trust store
@@ -50,10 +51,11 @@ else
         esac
 
         PEM="$TMP_DIR/$name.pem"
-        DER="$TMP_DIR/$name.der"
-        rm -f "$PEM" "$DER"
+        rm -f "$PEM"
 
-        # auto-detect DER vs PEM encoding
+        # auto-detect DER vs PEM encoding, normalize to PEM - the stock
+        # trust store ships PEM (e.g. /system/etc/security/cacerts/*.0)
+        # and Android parses both, so match the device's own format
         if grep -q "BEGIN CERTIFICATE" "$src" 2>/dev/null; then
             cp "$src" "$PEM"
         else
@@ -64,17 +66,19 @@ else
         HASH=$("$OPENSSL" x509 -subject_hash_old -in "$PEM" -noout 2>/dev/null)
         [ -n "$HASH" ] || { log_i "action: $name is not a valid certificate"; continue; }
 
-        "$OPENSSL" x509 -in "$PEM" -outform DER -out "$DER" 2>/dev/null
-        [ -f "$DER" ] || { log_i "action: failed to convert $name"; continue; }
+        # append an openssl -text -fingerprint dump after the PEM block,
+        # same layout as the stock system certificate files (Android
+        # ignores everything after the first certificate block)
+        "$OPENSSL" x509 -in "$PEM" -text -fingerprint -noout >> "$PEM" 2>/dev/null
 
-        # write converted/<hash>.N, keep the original in certs/
+        # write converted/<hash>.N as PEM, keep the original in certs/
         idx=0
         while [ -f "$CONVERTED_DIR/$HASH.$idx" ]; do
-            cmp -s "$DER" "$CONVERTED_DIR/$HASH.$idx" && break
+            cmp -s "$PEM" "$CONVERTED_DIR/$HASH.$idx" && break
             idx=$((idx + 1))
         done
-        if ! cmp -s "$DER" "$CONVERTED_DIR/$HASH.$idx" 2>/dev/null; then
-            cp "$DER" "$CONVERTED_DIR/$HASH.$idx"
+        if ! cmp -s "$PEM" "$CONVERTED_DIR/$HASH.$idx" 2>/dev/null; then
+            cp "$PEM" "$CONVERTED_DIR/$HASH.$idx"
             log_i "action: converted $name -> converted/$HASH.$idx"
         else
             log_i "action: $name already converted (converted/$HASH.$idx)"
