@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5
+
+- **框架挂载模式（默认）**：检测到 KernelSU 3.x metamodule（`/data/adb/metamodule`，如 meta-overlayfs）时不再自行 bind mount，模块 `system/` 树交由 root 框架挂载——挂载受内核按需卸载与「卸载模块」App Profile 管理，可对检测类应用隐藏（与 MoveCertificate 同思路：不自挂载）
+- bind mount 保留为**无 metamodule 设备**的兜底（降级路径，不隐蔽但可用）
+
 ## v1.4.1
 
 - **bind mount 后重挂载为只读**：原厂 `/system` 为只读分区，此前 rw 的 bind 挂载会使系统信任库目录变为可写（与原厂状态不符）。现在 bind 成功后执行 `mount -o remount,ro,bind` 恢复只读语义；后续注入仍写 staging 源目录（/data 分区 rw），通过 ro bind 视图即时可见，不受影响

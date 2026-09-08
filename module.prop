@@ -1,7 +1,7 @@
 id=auto_system_ca
 name=AutoSystemCA
-version=v1.4.1
-versionCode=8
+version=v1.5
+versionCode=9
 author=komori-flag
 description=Boot-time system CA injector: auto-converts and installs certificates from certs/ into the Android system trust store (DER/PEM auto-detect, subject_hash_old naming, Android 7-16, hash-collision & SELinux aware)
 updateJson=https://raw.githubusercontent.com/komori-flag/AutoSystemCA/main/update.json

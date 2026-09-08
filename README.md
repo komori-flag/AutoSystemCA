@@ -20,12 +20,14 @@ certs/ 目录 (.crt/.cer/.der/.pem)
    ↓ 写入模块 system/ 覆盖目录：
    │   ├─ system/etc/security/cacerts/            （Android 7-13）
    │   └─ system/apex/com.android.conscrypt/cacerts/ （Android 14+）
-   ↓ bind mount 到真实系统路径（路径已被 metamodule 挂载则自动跳过）
+   ↓ 挂载方式自动选择：
+   │   ├─ 有 KernelSU metamodule → 框架挂载（可被「卸载模块」App Profile 按应用隐藏）
+   │   └─ 无 metamodule → bind mount 兜底（重挂载为只读，匹配原厂 ro 分区）
    ↓ Android Framework 加载 → 证书生效
 ```
 
-- **不修改真实 /system**：bind mount 重启即消失、OTA 安全、卸载模块即完全恢复。
-- 注入使用 `mount --bind`，**不依赖 KSU magic mount**（KernelSU 3.0+ 已移除内置挂载，需要 metamodule 如 meta-overlayfs；无 metamodule 或挂载失效时 bind mount 兜底生效）。
+- **不修改真实 /system**：挂载重启即消失、OTA 安全、卸载模块即完全恢复。
+- **KernelSU 3.x 需安装 metamodule（如 meta-overlayfs）**：3.0 起内核不再内置模块挂载；安装后模块挂载由框架管理，可对检测类应用隐藏（设置 → 为该应用启用「卸载模块」）。无 metamodule 时自动降级为 bind mount 兜底。
 - Android 14+ 的系统 CA 存储位于 `/apex/com.android.conscrypt/cacerts`，脚本会自动检测并同时覆盖两个位置（`/system/etc/security/cacerts` 若为指向 apex 的软链则只注入 apex）。
 
 ## 使用方法

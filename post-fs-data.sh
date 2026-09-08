@@ -264,33 +264,47 @@ fi
 [ -f "$MANIFEST.tmp" ] && mv -f "$MANIFEST.tmp" "$MANIFEST"
 
 # ------------------------------------------------------------------
-# 8. bind-mount the merged staging dirs over the real trust-store
-#    paths, then remount read-only to match the stock system's ro
-#    partition semantics (stock /system is ro; a rw bind would expose
-#    a writable trust store). Independent of KSU magic mount
-#    (unreliable on HyperOS). Idempotent: skips already-mounted paths.
+# 8. mount the merged staging dirs over the real trust-store paths.
+#    Two modes:
+#
+#    FRAMEWORK MODE (default on KernelSU 3.x + metamodule like
+#    meta-overlayfs, detected by /data/adb/metamodule): the root
+#    framework owns all module mounting and can hide it per-app
+#    (unmount-on-demand / "unmount modules" app profiles). Our own
+#    mounts would bypass that and stay visible to every process, so we
+#    skip bind entirely and let the framework serve the module's
+#    system/ tree. This is how MoveCertificate behaves (no self-mount).
+#
+#    BIND MODE (fallback, no metamodule): bind-mount the staging dirs
+#    over the real paths, then remount read-only to match the stock
+#    ro /system. Plain binds are visible in mountinfo to every process
+#    - acceptable as a fallback, not stealthy.
+#
 #    Later injections write the staging source dir (rw, on /data) and
-#    are visible through the ro bind immediately - the bind is a view
-#    of the same tree, ro only blocks writes via the mount point.
+#    are visible through any active mount immediately.
 # ------------------------------------------------------------------
-for p in $PAIRS; do
-    staging="${p%|*}"; real="${p#*|}"
-    [ -d "$staging" ] || continue
-    [ -d "$real" ] || continue
-    if mount | grep -q " $real "; then
-        log_i "already mounted: $real"
-        continue
-    fi
-    if mount --bind "$staging" "$real" 2>/dev/null; then
-        log_i "bind-mounted $staging -> $real"
-        if mount -o remount,ro,bind "$real" 2>/dev/null; then
-            log_i "remounted read-only: $real"
-        else
-            log_i "warning: could not remount $real read-only"
+if [ -e /data/adb/metamodule ] || [ -d /data/adb/modules/meta-overlay ] || [ -d /data/adb/modules/meta-overlayfs ]; then
+    log_i "framework mode: metamodule detected, module mounts are managed by the root framework (bind skipped)"
+else
+    for p in $PAIRS; do
+        staging="${p%|*}"; real="${p#*|}"
+        [ -d "$staging" ] || continue
+        [ -d "$real" ] || continue
+        if mount | grep -q " $real "; then
+            log_i "already mounted: $real"
+            continue
         fi
-    else
-        log_i "bind mount failed: $real"
-    fi
-done
+        if mount --bind "$staging" "$real" 2>/dev/null; then
+            log_i "bind-mounted $staging -> $real"
+            if mount -o remount,ro,bind "$real" 2>/dev/null; then
+                log_i "remounted read-only: $real"
+            else
+                log_i "warning: could not remount $real read-only"
+            fi
+        else
+            log_i "bind mount failed: $real"
+        fi
+    done
+fi
 
 log_i "finished"
