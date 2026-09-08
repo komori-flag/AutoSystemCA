@@ -48,13 +48,35 @@ log_i() {
     echo "$(date '+%m-%d %H:%M:%S') $1" >> "$LOG_FILE" 2>/dev/null
 }
 
+# SELinux context of the real trust store. Conscrypt only trusts files
+# labeled with the store's own type (system_security_cacerts_file:s0 on
+# stock); writing files as system_file:s0 made them invisible to every
+# app (root shell could still read them - v1.5.1 fix). Value refined
+# after PAIRS is resolved below.
+TRUST_CTX="u:object_r:system_security_cacerts_file:s0"
+
 # fix SELinux context so the trust manager can read the file
 fix_ctx() {
     if command -v chcon >/dev/null 2>&1; then
-        chcon u:object_r:system_file:s0 "$1" 2>/dev/null
+        chcon "$TRUST_CTX" "$1" 2>/dev/null
     elif [ -x /system/bin/toybox ]; then
-        /system/bin/toybox chcon u:object_r:system_file:s0 "$1" 2>/dev/null
+        /system/bin/toybox chcon "$TRUST_CTX" "$1" 2>/dev/null
     fi
+}
+
+# split a "staging|real" pair string into $staging and $real.
+# NOTE: ${var%|*} / ${var#*|} MUST NOT be used here - Android's mksh
+# (R59) treats a bare | inside a parameter-expansion pattern as an
+# alternation operator, so the strip silently fails and both halves
+# come back as the whole pair. IFS word-splitting is POSIX-exact.
+pair_of() {  # $1 = pair; sets global $staging and $real
+    local _ifs
+    _ifs=$IFS
+    IFS='|'
+    set -- $1
+    staging=$1
+    real=$2
+    IFS=$_ifs
 }
 
 mkdir -p "$CERT_DIR" "$CONVERTED_DIR" "$TMP_DIR"
@@ -89,7 +111,17 @@ fi
 # staging dirs only (used by cleanup / pass-through / conversion)
 TARGETS=""
 for p in $PAIRS; do
-    TARGETS="$TARGETS ${p%|*}"
+    pair_of "$p"
+    TARGETS="$TARGETS $staging"
+done
+
+# refine the trust-store SELinux context from the real store (some ROMs
+# use a different type; fall back to the stock default above)
+for p in $PAIRS; do
+    pair_of "$p"
+    [ -d "$real" ] || continue
+    CTX=$(ls -Zd "$real" 2>/dev/null | awk '{print $1}')
+    [ -n "$CTX" ] && TRUST_CTX="$CTX" && break
 done
 
 # ------------------------------------------------------------------
@@ -97,8 +129,10 @@ done
 #    staging dirs, so the overlay/bind never hides the originals
 # ------------------------------------------------------------------
 for p in $PAIRS; do
-    staging="${p%|*}"; real="${p#*|}"
+    pair_of "$p"
     mkdir -p "$staging"
+    # the staging dir itself must carry the store's context too
+    fix_ctx "$staging"
     [ -d "$real" ] || continue
     for f in "$real"/*; do
         [ -f "$f" ] || continue
@@ -107,8 +141,10 @@ for p in $PAIRS; do
             cp "$f" "$staging/$name"
             chmod 0644 "$staging/$name"
             chown 0:0 "$staging/$name"
-            fix_ctx "$staging/$name"
         fi
+        # refresh the label even for pre-existing files (upgrades from
+        # versions that wrote system_file:s0 must be re-labeled)
+        fix_ctx "$staging/$name"
     done
 done
 
@@ -265,46 +301,51 @@ fi
 
 # ------------------------------------------------------------------
 # 8. mount the merged staging dirs over the real trust-store paths.
-#    Two modes:
 #
-#    FRAMEWORK MODE (default on KernelSU 3.x + metamodule like
-#    meta-overlayfs, detected by /data/adb/metamodule): the root
-#    framework owns all module mounting and can hide it per-app
-#    (unmount-on-demand / "unmount modules" app profiles). Our own
-#    mounts would bypass that and stay visible to every process, so we
-#    skip bind entirely and let the framework serve the module's
-#    system/ tree. This is how MoveCertificate behaves (no self-mount).
+#    Preferred: let the root framework serve the module's system/ tree
+#    (KernelSU 3.x metamodule like meta-overlayfs). Framework mounts
+#    can be hidden per-app (unmount-on-demand / "unmount modules"
+#    profiles) - our own mounts would bypass that and stay visible to
+#    every process (this is how MoveCertificate behaves: no self-mount).
 #
-#    BIND MODE (fallback, no metamodule): bind-mount the staging dirs
-#    over the real paths, then remount read-only to match the stock
-#    ro /system. Plain binds are visible in mountinfo to every process
-#    - acceptable as a fallback, not stealthy.
+#    Per-path decision: if a path (or any ancestor, e.g. an overlay on
+#    /system) already has a mount, the framework is serving it - skip.
+#    Otherwise bind-mount as a fallback and remount read-only to match
+#    the stock ro /system. The fallback also covers a metamodule that
+#    is installed but not actually mounting anything.
 #
 #    Later injections write the staging source dir (rw, on /data) and
 #    are visible through any active mount immediately.
 # ------------------------------------------------------------------
-if [ -e /data/adb/metamodule ] || [ -d /data/adb/modules/meta-overlay ] || [ -d /data/adb/modules/meta-overlayfs ]; then
-    log_i "framework mode: metamodule detected, module mounts are managed by the root framework (bind skipped)"
-else
-    for p in $PAIRS; do
-        staging="${p%|*}"; real="${p#*|}"
-        [ -d "$staging" ] || continue
-        [ -d "$real" ] || continue
-        if mount | grep -q " $real "; then
-            log_i "already mounted: $real"
-            continue
-        fi
-        if mount --bind "$staging" "$real" 2>/dev/null; then
-            log_i "bind-mounted $staging -> $real"
-            if mount -o remount,ro,bind "$real" 2>/dev/null; then
-                log_i "remounted read-only: $real"
-            else
-                log_i "warning: could not remount $real read-only"
-            fi
+# Idempotency check: has OUR staging dir already been bound to a real
+# path? (/proc/mounts shows the bind source for bind mounts.) Do NOT
+# skip on any pre-existing mount at the target - HyperOS mounts the
+# apex cacerts store natively (f2fs/dm-*) and Android 14+ conscrypt
+# reads the apex path, so that native mount must be shadowed by our
+# bind or the certificates never reach the framework. Our staging dirs
+# already merged the stock certs, so shadowing loses nothing.
+already_bound() {  # $1 = staging dir
+    grep -q " $1 " /proc/mounts 2>/dev/null
+}
+
+for p in $PAIRS; do
+    pair_of "$p"
+    [ -d "$staging" ] || continue
+    [ -d "$real" ] || continue
+    if already_bound "$staging"; then
+        log_i "already bind-mounted: $real"
+        continue
+    fi
+    if mount --bind "$staging" "$real" 2>/dev/null; then
+        log_i "bind-mounted $staging -> $real"
+        if mount -o remount,ro,bind "$real" 2>/dev/null; then
+            log_i "remounted read-only: $real"
         else
-            log_i "bind mount failed: $real"
+            log_i "warning: could not remount $real read-only"
         fi
-    done
-fi
+    else
+        log_i "bind mount failed: $real"
+    fi
+done
 
 log_i "finished"

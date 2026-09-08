@@ -12,7 +12,7 @@ POSTFSDATA=true          # 执行 post-fs-data.sh（开机早期注入证书）
 LATESTARTSERVICE=true    # 执行 service.sh（开机完成后二次校验）
 
 ui_print "*******************************"
-ui_print "   AutoSystemCA v1.2"
+ui_print "   AutoSystemCA v1.5.1"
 ui_print "*******************************"
 ui_print "- Setting up module files..."
 

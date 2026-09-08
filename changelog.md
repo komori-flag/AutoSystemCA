@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.5.1
+
+- **修复 SELinux context（决定性）**：注入文件此前被标记为 `system_file:s0`，而真实信任库是 `system_security_cacerts_file:s0`——conscrypt 的 SELinux 策略拒绝读取，导致 root 可见但所有 App 与系统设置均不可见。现在改为从真实信任库目录动态读取 context 套用（staging 目录与文件、含旧版本升级残留一并重刷）
+- **修复 mksh 参数展开 bug（决定性）**：Android mksh R59 把 `${var%|*}` / `${var#*|}` 中 pattern 的裸 `|` 当作 alternation，剥离静默失败——staging/real 路径全变成带 `|` 的怪路径。改用 `IFS='|'` + `set --` 分词（`pair_of` 函数，POSIX 精确）
+- **apex 路径无条件 bind**：幂等检测改为查 `/proc/mounts` 是否已有本模块 staging 的 bind；不再因"路径已有任何挂载"而跳过——HyperOS 上 apex cacerts 存在原生挂载，Android 14+ framework 读 apex 路径，必须 shadow 原生挂载注入才生效（staging 已 merge stock，shadow 无损失）
+- 验证：注入后「设置 → 信任的凭据 → 系统」可见自签 CA（真机实测通过）
+
 ## v1.5
 
 - **框架挂载模式（默认）**：检测到 KernelSU 3.x metamodule（`/data/adb/metamodule`，如 meta-overlayfs）时不再自行 bind mount，模块 `system/` 树交由 root 框架挂载——挂载受内核按需卸载与「卸载模块」App Profile 管理，可对检测类应用隐藏（与 MoveCertificate 同思路：不自挂载）
