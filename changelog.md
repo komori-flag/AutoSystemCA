@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.4.1
+
+- **bind mount 后重挂载为只读**：原厂 `/system` 为只读分区，此前 rw 的 bind 挂载会使系统信任库目录变为可写（与原厂状态不符）。现在 bind 成功后执行 `mount -o remount,ro,bind` 恢复只读语义；后续注入仍写 staging 源目录（/data 分区 rw），通过 ro bind 视图即时可见，不受影响
+
 ## v1.4
 
 - **转换输出与系统证书同布局**：遍历设备系统信任库（如 `7d453d8f.0`）确认自带证书为「PEM 证书块 + `openssl -text -fingerprint` 信息转储」，转换产物由 DER 改为与之完全一致的格式（Android 只解析首个证书块，转储被忽略；`subject_hash_old` 命名不变，旧 DER 转换文件依然有效）

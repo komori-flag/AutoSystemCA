@@ -265,8 +265,13 @@ fi
 
 # ------------------------------------------------------------------
 # 8. bind-mount the merged staging dirs over the real trust-store
-#    paths. Independent of KSU magic mount (unreliable on HyperOS).
-#    Idempotent: skips paths that are already mounted.
+#    paths, then remount read-only to match the stock system's ro
+#    partition semantics (stock /system is ro; a rw bind would expose
+#    a writable trust store). Independent of KSU magic mount
+#    (unreliable on HyperOS). Idempotent: skips already-mounted paths.
+#    Later injections write the staging source dir (rw, on /data) and
+#    are visible through the ro bind immediately - the bind is a view
+#    of the same tree, ro only blocks writes via the mount point.
 # ------------------------------------------------------------------
 for p in $PAIRS; do
     staging="${p%|*}"; real="${p#*|}"
@@ -278,6 +283,11 @@ for p in $PAIRS; do
     fi
     if mount --bind "$staging" "$real" 2>/dev/null; then
         log_i "bind-mounted $staging -> $real"
+        if mount -o remount,ro,bind "$real" 2>/dev/null; then
+            log_i "remounted read-only: $real"
+        else
+            log_i "warning: could not remount $real read-only"
+        fi
     else
         log_i "bind mount failed: $real"
     fi
