@@ -1,30 +1,32 @@
 #!/system/bin/sh
-# AutoSystemCA - boot-time system CA injector (KernelSU / Magisk / APatch)
+# AutoSystemCA v2.0 - boot-time system CA injector (KernelSU / Magisk / APatch)
 #
-# Single flow: drop certificates into $MODDIR/certs/ and reboot.
+# Flow: drop certificates into $MODDIR/certs/ and reboot.
 # Directory layout:
 #   certs/      raw certificates, kept as-is
 #   converted/  <subject_hash_old>.N files - produced by the module
 #               action (Execute) or converted with openssl on a PC
+#   config      INJECT_MODE=tmpfs|passive (see below)
 #
-# At boot this script:
-#   1. merges the real trust store into the module staging dirs so the
-#      overlay never hides the original system certificates
-#   2. copies converted files from converted/ (and pre-converted
-#      <hash>.N files dropped into certs/) into the staging dirs
-#   3. if openssl is available, converts raw .crt/.cer/.der/.pem files
-#      (DER/PEM auto-detect, normalized to PEM + trailing text dump,
-#      matching the stock store layout) and injects them too
-#   4. bind-mounts the merged staging dirs over the real trust-store
-#      paths (system + apex). bind mount does NOT depend on KSU magic
-#      mount, which is unreliable on HyperOS/MIUI and some KSU builds.
+# Inject modes (config):
+#   tmpfs   (default) - the merged store is copied into a tmpfs, disguised
+#           with the stock apex attributes, bind-mounted over the real
+#           apex cacerts paths (plus zygote mount namespaces via nsenter)
+#           and locked read-only. The mount source is tmpfs - there is no
+#           /data-backed mount showing the module path in /proc/mounts,
+#           which is the fingerprint detector apps look for.
+#   passive - zero mounts: certificates are only staged inside the module
+#           directory (with correct SELinux labels) and left for a
+#           framework mount layer to serve. Nothing is ever mounted, so
+#           nothing can be detected - but nothing takes effect either
+#           unless the root framework mounts the module's system/ tree.
 #
-# Devices without openssl: run the module action once (KernelSU
-# Manager -> module -> Execute) to convert certs/ files into <hash>.N,
-# then reboot - the boot script then only copies them (step 2).
+# Fail-safe: nothing is bind-mounted unless the tmpfs copy is verified to
+# contain at least as many files as the real store. A missing or short
+# copy aborts the mount instead of shadowing the store with an empty dir.
 #
-# The real /system is never modified: bind mounts vanish on reboot,
-# module uninstall removes the staging dirs - OTA-safe.
+# The real partitions are never modified: mounts vanish on reboot, module
+# uninstall removes the staging dirs - OTA-safe.
 #
 # Debug: logcat | grep AutoSystemCA  /  cat $MODDIR/last-run.log
 
@@ -37,6 +39,25 @@ LOG_FILE="$MODDIR/last-run.log"
 MOD_SYSTEM="$MODDIR/system"
 MANIFEST="$MODDIR/.installed.list"
 TMP_DIR=/data/local/tmp/auto_system_ca
+SRC_MNT=/mnt/.autoca_system_ca
+
+# ------------------------------------------------------------------
+# configuration (config file, defaults below)
+#   INJECT_MODE=tmpfs|passive
+#   SYNC_SYSTEM=0|1 - also serve /system/etc/security/cacerts when it is
+#     a real directory (not a symlink to apex). Default 0: on Android 14+
+#     conscrypt reads the apex path, which is the only one we touch.
+# ------------------------------------------------------------------
+INJECT_MODE=tmpfs
+SYNC_SYSTEM=0
+CONFIG_FILE="$MODDIR/config"
+if [ -f "$CONFIG_FILE" ]; then
+    . "$CONFIG_FILE" 2>/dev/null
+fi
+case "$INJECT_MODE" in
+    tmpfs|passive) ;;
+    *) INJECT_MODE=tmpfs ;;
+esac
 
 log_i() {
     if [ -x /system/bin/log ]; then
@@ -81,7 +102,7 @@ pair_of() {  # $1 = pair; sets global $staging and $real
 
 mkdir -p "$CERT_DIR" "$CONVERTED_DIR" "$TMP_DIR"
 
-log_i "post-fs-data.sh started"
+log_i "post-fs-data.sh started (mode=$INJECT_MODE)"
 
 # ------------------------------------------------------------------
 # 1. openssl detection (only needed for the conversion path)
@@ -95,13 +116,20 @@ fi
 
 # ------------------------------------------------------------------
 # 2. resolve trust-store pairs "staging|real"
-#    Android 14+: /system/etc/security/cacerts may be a symlink to the
-#    apex store - then only the apex pair is used.
+#    Android 14+ (conscrypt apex present): the apex store is authoritative;
+#    tap it through both the symlink path and the versioned directory, as
+#    different processes resolve the path differently. The system path is
+#    only added when SYNC_SYSTEM=1 and it is a real directory.
+#    Android <= 13: the system path is the store.
 # ------------------------------------------------------------------
 PAIRS=""
 if [ -d /apex/com.android.conscrypt/cacerts ]; then
     PAIRS="$MOD_SYSTEM/apex/com.android.conscrypt/cacerts|/apex/com.android.conscrypt/cacerts"
-    if [ ! -L /system/etc/security/cacerts ]; then
+    APEX_VER_DIR=$(find /apex -maxdepth 1 -type d -name 'com.android.conscrypt@*' 2>/dev/null | head -n1)
+    if [ -n "$APEX_VER_DIR" ]; then
+        PAIRS="$PAIRS $MOD_SYSTEM/apex/com.android.conscrypt/cacerts|$APEX_VER_DIR/cacerts"
+    fi
+    if [ "$SYNC_SYSTEM" = "1" ] && [ -d /system/etc/security/cacerts ] && [ ! -L /system/etc/security/cacerts ]; then
         PAIRS="$PAIRS $MOD_SYSTEM/etc/security/cacerts|/system/etc/security/cacerts"
     fi
 else
@@ -112,7 +140,10 @@ fi
 TARGETS=""
 for p in $PAIRS; do
     pair_of "$p"
-    TARGETS="$TARGETS $staging"
+    case " $TARGETS " in
+        *" $staging "*) ;;                       # dedupe (apex pair twice)
+        *) TARGETS="$TARGETS $staging" ;;
+    esac
 done
 
 # refine the trust-store SELinux context from the real store (some ROMs
@@ -126,7 +157,7 @@ done
 
 # ------------------------------------------------------------------
 # 3. merge: copy stock certificates from the real store into the
-#    staging dirs, so the overlay/bind never hides the originals
+#    staging dirs, so the merged store never hides the originals
 # ------------------------------------------------------------------
 for p in $PAIRS; do
     pair_of "$p"
@@ -300,51 +331,142 @@ fi
 [ -f "$MANIFEST.tmp" ] && mv -f "$MANIFEST.tmp" "$MANIFEST"
 
 # ------------------------------------------------------------------
-# 8. mount the merged staging dirs over the real trust-store paths.
-#
-#    Preferred: let the root framework serve the module's system/ tree
-#    (KernelSU 3.x metamodule like meta-overlayfs). Framework mounts
-#    can be hidden per-app (unmount-on-demand / "unmount modules"
-#    profiles) - our own mounts would bypass that and stay visible to
-#    every process (this is how MoveCertificate behaves: no self-mount).
-#
-#    Per-path decision: if a path (or any ancestor, e.g. an overlay on
-#    /system) already has a mount, the framework is serving it - skip.
-#    Otherwise bind-mount as a fallback and remount read-only to match
-#    the stock ro /system. The fallback also covers a metamodule that
-#    is installed but not actually mounting anything.
-#
-#    Later injections write the staging source dir (rw, on /data) and
-#    are visible through any active mount immediately.
+# 8. mount stage
+#    tmpfs mode: copy the merged staging store into a tmpfs, disguise it
+#    with the stock apex file attributes, then bind it over every real
+#    target and into the zygote mount namespaces, and lock it read-only.
+#    The mount source is tmpfs - /proc/mounts shows no /data-backed path
+#    (the module directory never appears there), which is what mount
+#    scanners flag as a root artifact.
 # ------------------------------------------------------------------
-# Idempotency check: has OUR staging dir already been bound to a real
-# path? (/proc/mounts shows the bind source for bind mounts.) Do NOT
-# skip on any pre-existing mount at the target - HyperOS mounts the
-# apex cacerts store natively (f2fs/dm-*) and Android 14+ conscrypt
-# reads the apex path, so that native mount must be shadowed by our
-# bind or the certificates never reach the framework. Our staging dirs
-# already merged the stock certs, so shadowing loses nothing.
-already_bound() {  # $1 = staging dir
-    grep -q " $1 " /proc/mounts 2>/dev/null
-}
+if [ "$INJECT_MODE" = "passive" ]; then
+    log_i "passive mode: certificates staged in $MODDIR (no mounts); framework mount layer or config change required to take effect"
+    log_i "finished"
+    exit 0
+fi
 
+# --- 8a. clean up our own leftovers from a previous run (soft reboot) --
+# Only ever unmount a target whose top mount belongs to US (source is
+# SRC_MNT). Device ROMs ship a native mount on the apex cacerts path
+# (f2fs/dm-*) - a blind umount would tear that down.
+if grep -q " $SRC_MNT " /proc/mounts 2>/dev/null; then
+    for p in $PAIRS; do
+        pair_of "$p"
+        if mount 2>/dev/null | grep " on $real " | grep -q "$SRC_MNT"; then
+            umount "$real" 2>/dev/null
+        fi
+    done
+    umount "$SRC_MNT" 2>/dev/null
+    log_i "cleaned up previous tmpfs mount"
+fi
+mkdir -p "$SRC_MNT"
+
+# --- 8b. mount a fresh tmpfs as the store source ----------------------
+if ! mount -t tmpfs -o mode=755,noatime tmpfs "$SRC_MNT" 2>/dev/null; then
+    log_i "ABORT: could not mount tmpfs at $SRC_MNT - no changes made"
+    log_i "finished"
+    exit 0
+fi
+log_i "tmpfs mounted at $SRC_MNT"
+
+# --- 8c. fill it from the merged staging store ------------------------
+SRC_OK=0
+for t in $TARGETS; do
+    [ -d "$t" ] || continue
+    cp -f "$t"/* "$SRC_MNT"/ 2>/dev/null
+    SRC_OK=1
+    break   # all staging dirs carry the same merged content
+done
+if [ "$SRC_OK" -ne 1 ]; then
+    umount "$SRC_MNT" 2>/dev/null
+    log_i "ABORT: no staging content to serve - no changes made"
+    log_i "finished"
+    exit 0
+fi
+
+# --- 8d. fail-safe: the copy must be at least as complete as the real
+#     store, or we would shadow it with an incomplete directory --------
 for p in $PAIRS; do
     pair_of "$p"
-    [ -d "$staging" ] || continue
     [ -d "$real" ] || continue
-    if already_bound "$staging"; then
-        log_i "already bind-mounted: $real"
+    real_count=$(ls -1 "$real" 2>/dev/null | wc -l)
+    src_count=$(ls -1 "$SRC_MNT" 2>/dev/null | wc -l)
+    if [ "$real_count" -gt 0 ] && [ "$src_count" -lt "$real_count" ]; then
+        umount "$SRC_MNT" 2>/dev/null
+        log_i "ABORT: tmpfs copy too small ($src_count < $real_count for $real) - no changes made"
+        log_i "finished"
+        exit 0
+    fi
+    break
+done
+
+# --- 8e. disguise with the stock apex attributes ----------------------
+chown -R system:system "$SRC_MNT" 2>/dev/null
+chmod -R 644 "$SRC_MNT"/* 2>/dev/null
+chmod 755 "$SRC_MNT" 2>/dev/null
+# stock apex certs are stamped 1970; matching hides a freshly-written look
+touch -t 197001010800 "$SRC_MNT"/* "$SRC_MNT" 2>/dev/null
+fix_ctx "$SRC_MNT"
+for f in "$SRC_MNT"/*; do
+    [ -f "$f" ] && fix_ctx "$f"
+done
+log_i "tmpfs store prepared: $(ls -1 "$SRC_MNT" | wc -l) files"
+
+# --- 8f. bind over every real target ----------------------------------
+# Shadowing a pre-existing native mount (HyperOS mounts the apex store
+# natively) is intentional - the staging store already merged the stock
+# certs, so the shadow loses nothing. Only OUR bind (source=SRC_MNT) is
+# treated as "already done"; any other pre-existing mount must still be
+# shadowed or the certificates never reach the framework.
+BIND_OK=0
+for p in $PAIRS; do
+    pair_of "$p"
+    [ -d "$real" ] || continue
+    if mount 2>/dev/null | grep " on $real " | grep -q "$SRC_MNT"; then
+        log_i "already bind-mounted (our tmpfs): $real"
+        BIND_OK=1
         continue
     fi
-    if mount --bind "$staging" "$real" 2>/dev/null; then
-        log_i "bind-mounted $staging -> $real"
-        if mount -o remount,ro,bind "$real" 2>/dev/null; then
-            log_i "remounted read-only: $real"
-        else
-            log_i "warning: could not remount $real read-only"
-        fi
+    if mount -o bind "$SRC_MNT" "$real" 2>/dev/null; then
+        log_i "bind-mounted tmpfs -> $real"
+        BIND_OK=1
     else
         log_i "bind mount failed: $real"
+    fi
+done
+if [ "$BIND_OK" -ne 1 ]; then
+    umount "$SRC_MNT" 2>/dev/null
+    log_i "ABORT: no target could be mounted - cleaned up"
+    log_i "finished"
+    exit 0
+fi
+
+# --- 8g. propagate into the zygote mount namespaces -------------------
+# Processes started before this script (existing zygotes) have their own
+# frozen mount namespaces; without nsenter they would keep seeing the
+# old store until reboot.
+if command -v nsenter >/dev/null 2>&1; then
+    for pid in 1 $(pgrep zygote 2>/dev/null) $(pgrep zygote64 2>/dev/null); do
+        [ -d "/proc/$pid/ns/mnt" ] || continue
+        for p in $PAIRS; do
+            pair_of "$p"
+            [ -d "$real" ] || continue
+            nsenter --mount="/proc/$pid/ns/mnt" -- mount -o bind "$SRC_MNT" "$real" 2>/dev/null
+        done
+    done
+    log_i "bind propagated to zygote namespaces"
+else
+    log_i "note: nsenter unavailable - running processes may need a restart"
+fi
+
+# --- 8h. lock read-only (stock semantic) ------------------------------
+for p in $PAIRS; do
+    pair_of "$p"
+    [ -d "$real" ] || continue
+    if mount -o remount,ro,bind "$real" 2>/dev/null; then
+        log_i "remounted read-only: $real"
+    else
+        log_i "warning: could not remount $real read-only"
     fi
 done
 

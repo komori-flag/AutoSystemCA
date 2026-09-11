@@ -1,6 +1,19 @@
 # Changelog
 
-## v1.5.1
+## v2.0（安全架构重构）
+
+⚠️ **v1.3 ~ v1.5.1 已全部撤回**（Release 与 tag 删除）：这些版本的自 bind 挂载把模块路径暴露在 mount 表（`root=/adb/modules/...`，被检测工具标记为 data-backed 系统挂载），并诱导安装 meta-overlayfs（其镜像模型与动态注入冲突，空目录 bind 曾导致系统无法启动）。请勿使用旧版。
+
+- **tmpfs 挂载源**：合并后的证书库复制进内存 tmpfs（伪装原厂 apex 文件属性）再 bind 到 apex 路径——`/proc/mounts` 不再出现 /data 或模块路径特征，规避 Hunter 类 `ACTIVE_DATA_BACKED_SYSTEM_MOUNT` 检测
+- **nsenter 注入 zygote 命名空间**：运行中的进程立即看到新证书，「执行」按钮无需重启即生效
+- **只触碰 apex 路径**：Android 14+ 不再处理 system 路径（`config` 的 `SYNC_SYSTEM=1` 可按需启用）；不触碰任何系统组件目录
+- **fail-safe 防御**：副本不完整（少于真实库）绝不 bind，每步失败自动回滚——不会再出现"空目录覆盖系统"类事故
+- **只读锁定**：挂载后 `remount,ro` 匹配原厂只读语义
+- **零 metamodule 依赖**：彻底解耦 meta-overlayfs
+- **passive 模式**（`config`）：零挂载绝对安全档
+- 保留全部历史修复：mksh R59 的 `|` pattern bug（pair_of）、SELinux context 动态修复、mapping 来源追踪、幂等与清单清理
+
+## v1.5.1（已撤回）
 
 - **修复 SELinux context（决定性）**：注入文件此前被标记为 `system_file:s0`，而真实信任库是 `system_security_cacerts_file:s0`——conscrypt 的 SELinux 策略拒绝读取，导致 root 可见但所有 App 与系统设置均不可见。现在改为从真实信任库目录动态读取 context 套用（staging 目录与文件、含旧版本升级残留一并重刷）
 - **修复 mksh 参数展开 bug（决定性）**：Android mksh R59 把 `${var%|*}` / `${var#*|}` 中 pattern 的裸 `|` 当作 alternation，剥离静默失败——staging/real 路径全变成带 `|` 的怪路径。改用 `IFS='|'` + `set --` 分词（`pair_of` 函数，POSIX 精确）

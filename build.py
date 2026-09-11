@@ -10,6 +10,7 @@ import zipfile
 # 打包进 zip 的文件（保持正斜杠相对路径）
 FILES = [
     "module.prop",
+    "config",
     "customize.sh",
     "post-fs-data.sh",
     "service.sh",

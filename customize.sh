@@ -12,7 +12,7 @@ POSTFSDATA=true          # 执行 post-fs-data.sh（开机早期注入证书）
 LATESTARTSERVICE=true    # 执行 service.sh（开机完成后二次校验）
 
 ui_print "*******************************"
-ui_print "   AutoSystemCA v1.5.1"
+ui_print "   AutoSystemCA v2.0"
 ui_print "*******************************"
 ui_print "- Setting up module files..."
 
@@ -30,3 +30,6 @@ ui_print "  /data/adb/modules/auto_system_ca/certs/"
 ui_print "- Press 'Execute' to convert them into"
 ui_print "  converted/ (originals are kept)."
 ui_print "- Then reboot to apply."
+ui_print "- SAFE MODE: default inject mode is 'tmpfs'"
+ui_print "  (confined apex mount, no /data fingerprint)."
+ui_print "  config file: INJECT_MODE=tmpfs|passive"

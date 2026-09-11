@@ -1,6 +1,6 @@
 {
-  "version": "v1.5.1",
-  "versionCode": 10,
+  "version": "v2.0",
+  "versionCode": 11,
   "zipUrl": "https://github.com/komori-flag/AutoSystemCA/releases/latest/download/AutoSystemCA.zip",
   "changelog": "https://raw.githubusercontent.com/komori-flag/AutoSystemCA/main/changelog.md"
 }

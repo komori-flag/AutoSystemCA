@@ -1,12 +1,11 @@
 #!/system/bin/sh
 # AutoSystemCA - late-boot re-verification pass
 #
-# post-fs-data.sh already injected the certificates early (before zygote
-# starts). This second pass runs after the system has fully settled and
-# re-installs anything that went missing, guarding against races with
-# APEX / trust-store initialization on some devices. The injection
-# logic in post-fs-data.sh is idempotent (identical certs are skipped),
-# so re-running it is safe.
+# post-fs-data.sh already injected the certificates early. This second
+# pass runs after the system has settled and re-applies the injection,
+# guarding against races with APEX / trust-store initialization on some
+# devices. The script is idempotent (existing identical mounts and
+# certificates are skipped), so re-running it is safe.
 
 MODDIR=${0%/*}
 

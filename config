@@ -1,0 +1,18 @@
+# AutoSystemCA 配置文件
+#
+# INJECT_MODE - 注入模式：
+#   tmpfs   （默认）把合并后的证书库复制进内存 tmpfs，伪装成原厂 apex
+#           文件属性后 bind 到真实 apex 路径（并注入 zygote 命名空间），
+#           最后锁定只读。挂载源是 tmpfs，mount 表中不出现 /data 或
+#           模块路径特征（检测工具关注的指纹）。
+#   passive 零挂载：证书只写入模块目录（SELinux 标签正确），交由框架
+#           挂载层呈现。绝对安全、绝不可检测，但除非 root 框架挂载了
+#           模块的 system/ 目录，否则证书不生效。
+#
+# SYNC_SYSTEM - 是否同时接管 /system/etc/security/cacerts：
+#   0（默认）Android 14+ 只处理 apex 路径（conscrypt 的权威存储）
+#   1 当 /system/etc/security/cacerts 是真实目录（非软链）时也一并挂载
+#     （个别 ROM 的框架仍读取该路径，若证书不生效可开启）
+
+INJECT_MODE=tmpfs
+SYNC_SYSTEM=0

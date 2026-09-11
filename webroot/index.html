@@ -14,38 +14,52 @@ p, li { font-size: 14px; line-height: 1.7; }
 ol, ul { padding-left: 20px; margin: 8px 0; }
 code { background: #eee; padding: 1px 6px; border-radius: 4px; font-size: 13px; word-break: break-all; }
 strong { color: #d32f2f; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+td, th { border-bottom: 1px solid #eee; padding: 6px 4px; text-align: left; }
 </style>
 </head>
 <body>
-<h1>AutoSystemCA</h1>
-<p class="sub">开机自动系统 CA 注入模块</p>
+<h1>AutoSystemCA v2.0</h1>
+<p class="sub">开机自动系统 CA 注入模块 · 安全架构</p>
 
 <div class="card">
 <h2>使用流程</h2>
 <ol>
 <li>把原始证书放入<br><code>/data/adb/modules/auto_system_ca/certs/</code>（原文件保留）</li>
 <li>设备有 openssl：直接<strong>重启</strong>，开机自动转换并注入</li>
-<li>设备无 openssl：点模块的<strong>「执行」</strong>按钮完成转换（需先装 openssl，如 Termux <code>pkg install openssl-tool</code>），转换产物输出到 <code>converted/</code>；或放入电脑预转换好的 <code>&lt;hash&gt;.0</code> 文件</li>
-<li><strong>重启后生效</strong>（或「执行」后强制停止目标应用）</li>
+<li>设备无 openssl：点模块的<strong>「执行」</strong>（Termux 可先 <code>pkg install openssl-tool</code>），转换产物输出到 <code>converted/</code>；或放入电脑预转换的 <code>&lt;hash&gt;.0</code> 文件</li>
+<li>v2.0 的「执行」会注入运行中的进程（nsenter），<strong>无需重启即刻生效</strong></li>
 </ol>
-<p>转换来源映射：<code>cat .../converted/mapping.txt</code>（格式 <code>hash.N|原始文件名</code>）</p>
+<p>转换来源映射：<code>cat .../converted/mapping.txt</code>（格式 <code>hash.n|原始文件名</code>）</p>
+</div>
+
+<div class="card">
+<h2>注入模式（config 文件）</h2>
+<table>
+<tr><th>模式</th><th>说明</th></tr>
+<tr><td><code>tmpfs</code>（默认）</td><td>内存 tmpfs 挂载到 apex 路径并锁定只读；mount 表无 /data 特征（检测对抗）</td></tr>
+<tr><td><code>passive</code></td><td>零挂载绝对安全；证书只写入模块目录，需框架挂载才生效</td></tr>
+</table>
+<p><code>SYNC_SYSTEM=1</code>：证书不生效的个别 ROM（framework 读 system 真实目录）可开启。</p>
 </div>
 
 <div class="card">
 <h2>检查注入是否成功</h2>
 <p>
 <code>cat /data/adb/modules/auto_system_ca/last-run.log</code><br><br>
-<code>logcat -d | grep AutoSystemCA</code><br><br>
-看到 <code>installed 0f4ed297.0</code> 即成功。
+<code>mount | grep cacerts</code> → 应显示 <strong>tmpfs</strong> 挂载（而非 /data）<br><br>
+<code>ls -Z /apex/com.android.conscrypt/cacerts/ | grep 你的hash</code> → 标签应为 <code>system_security_cacerts_file</code>
 </p>
+<p>看到 <code>ABORT</code> 表示 fail-safe 中止（副本不完整，未做任何挂载）——检查 certs/ 与 converted/ 内容。</p>
 </div>
 
 <div class="card">
-<h2>注意事项</h2>
+<h2>检测对抗（KSU 策略反转）</h2>
 <ul>
-<li>只注入 <code>certs/</code> 目录里的证书；删除文件并重启即自动移除</li>
-<li>root 能看到证书但 App 不信任：KernelSU 设置里关闭「默认卸载模块」，或为该应用设置「保留模块挂载」，再重启应用</li>
-<li>Android 14+ 需要较新的 KernelSU 版本以支持 <code>/apex</code> 覆盖</li>
+<li>KSU 设置 → 启用<strong>「默认卸载模块」</strong>：未授权应用（检测/银行类）纯净沙盒，无挂载痕迹</li>
+<li>为抓包工具（AdGuard/浏览器）单独开启<strong>「保留模块挂载」</strong>：只有它们看到证书</li>
+<li>配合 LSPosed 隐藏应用列表隐藏 root 工具</li>
+<li>敏感时期可 <code>config</code> 切 <code>passive</code>（零挂载）</li>
 </ul>
 </div>
 </body>

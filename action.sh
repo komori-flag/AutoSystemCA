@@ -2,15 +2,13 @@
 # AutoSystemCA - on-demand convert + inject (KernelSU Manager -> Execute)
 #
 # 1. converts raw certificates in certs/ (.crt/.cer/.der/.pem, DER/PEM)
-#    into the final trust-store files <subject_hash_old>.N (PEM-encoded
-#    + trailing text dump, matching the stock store layout) in
+#    into the final trust-store files <subject_hash_old>.N in
 #    converted/ - the originals are KEPT
 # 2. rebuilds converted/mapping.txt ("hash.N|original-name") so the
 #    origin of every converted file stays traceable
-# 3. injects the converted files into the system trust store
-#
-# After converting, reboot (or force-stop the target app) for the
-# certificates to become effective.
+# 3. re-runs the injection (post-fs-data.sh) - in tmpfs mode this also
+#    uses nsenter to place the mount into running zygote namespaces, so
+#    no reboot is needed for the certificates to become effective
 #
 # openssl is looked up in: PATH, /system/bin, /system/xbin, module
 # tools/ and Termux (/data/data/com.termux/files/usr/bin) - install it
@@ -88,7 +86,7 @@ else
     [ -f "$CONVERTED_DIR/mapping.txt.tmp" ] && mv -f "$CONVERTED_DIR/mapping.txt.tmp" "$CONVERTED_DIR/mapping.txt"
 fi
 
-# inject now (converted pass-through; needs no openssl)
+# inject now (tmpfs mode: nsenter makes it effective immediately)
 [ -f "$MODDIR/post-fs-data.sh" ] && sh "$MODDIR/post-fs-data.sh"
 
-log_i "action: done - reboot (or force-stop the target app) for the certificates to take effect"
+log_i "action: done"

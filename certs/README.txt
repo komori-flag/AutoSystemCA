@@ -3,9 +3,14 @@
   /data/adb/modules/auto_system_ca/certs/
 
 流程：放入这里 → 模块页点「执行」（转换产物输出到 ../converted/，原文件保留）
-→ 重启生效。设备有 openssl 时直接重启即可，开机自动转换。
+→ 重启生效（或「执行」后即刻生效，v2.0 的 nsenter 会注入运行中的进程）。
+设备有 openssl 时直接重启即可，开机自动转换。
 
 转换来源映射：cat ../converted/mapping.txt（格式：hash.N|原始文件名）
+
+注入模式（../config）：
+- INJECT_MODE=tmpfs（默认）：内存 tmpfs 挂载，无 /data 特征，证书生效
+- INJECT_MODE=passive：零挂载绝对安全，证书需框架挂载才生效
 
 注意事项：
 - 支持扩展名：.crt .cer .der .pem

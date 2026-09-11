@@ -1,7 +1,7 @@
 id=auto_system_ca
 name=AutoSystemCA
-version=v1.5.1
-versionCode=10
+version=v2.0
+versionCode=11
 author=komori-flag
-description=Boot-time system CA injector: auto-converts and installs certificates from certs/ into the Android system trust store (DER/PEM auto-detect, subject_hash_old naming, Android 7-16, hash-collision & SELinux aware)
+description=Boot-time system CA injector (safe v2.0): tmpfs-backed confined apex mount with no /data fingerprint, nsenter zygote injection, read-only locked; passive mode for zero mounts. DER/PEM auto-convert, subject_hash_old naming, Android 7-16
 updateJson=https://raw.githubusercontent.com/komori-flag/AutoSystemCA/main/update.json
