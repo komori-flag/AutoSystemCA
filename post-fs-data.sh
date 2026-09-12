@@ -348,20 +348,25 @@ if [ "$INJECT_MODE" = "passive" ]; then
     exit 0
 fi
 
-# --- 8a. clean up our own leftovers from a previous run (soft reboot) --
-# Only ever unmount a target whose top mount belongs to US (source is
-# SRC_MNT). Device ROMs ship a native mount on the apex cacerts path
-# (f2fs/dm-*) - a blind umount would tear that down.
-if grep -q " $SRC_MNT " /proc/mounts 2>/dev/null; then
-    for p in $PAIRS; do
-        pair_of "$p"
-        if mount 2>/dev/null | grep " on $real " | grep -q "$SRC_MNT"; then
-            umount "$real" 2>/dev/null
-        fi
+# --- 8a. clean up our own leftovers from a previous run -------------
+# Identification is by a marker file inside the served store: a mount
+# whose visible content carries /$MARKER is ours. This does NOT rely on
+# mount output formatting - tmpfs mounts list their source as "tmpfs",
+# not as the mount point path, so source-grepping fails and layers would
+# pile up on every run. Device ROMs ship a native mount on the apex
+# cacerts path too; only mounts that expose our marker are ever
+# unmounted, never the native one.
+MARKER=.autoca_marker
+for p in $PAIRS; do
+    pair_of "$p"
+    [ -d "$real" ] || continue
+    n=0
+    while [ -f "$real/$MARKER" ] && [ "$n" -lt 5 ]; do
+        umount "$real" 2>/dev/null || break
+        n=$((n + 1))
     done
-    umount "$SRC_MNT" 2>/dev/null
-    log_i "cleaned up previous tmpfs mount"
-fi
+done
+umount "$SRC_MNT" 2>/dev/null
 mkdir -p "$SRC_MNT"
 
 # --- 8b. mount a fresh tmpfs as the store source ----------------------
@@ -386,6 +391,8 @@ if [ "$SRC_OK" -ne 1 ]; then
     log_i "finished"
     exit 0
 fi
+# ownership marker: lets future runs (and no one else) identify this mount
+touch "$SRC_MNT/$MARKER" 2>/dev/null
 
 # --- 8d. fail-safe: the copy must be at least as complete as the real
 #     store, or we would shadow it with an incomplete directory --------
@@ -417,15 +424,15 @@ log_i "tmpfs store prepared: $(ls -1 "$SRC_MNT" | wc -l) files"
 
 # --- 8f. bind over every real target ----------------------------------
 # Shadowing a pre-existing native mount (HyperOS mounts the apex store
-# natively) is intentional - the staging store already merged the stock
-# certs, so the shadow loses nothing. Only OUR bind (source=SRC_MNT) is
-# treated as "already done"; any other pre-existing mount must still be
-# shadowed or the certificates never reach the framework.
+# natively - as tmpfs, as observed) is intentional: the staging store
+# already merged the stock certs, so the shadow loses nothing. "Already
+# done" is judged by our marker showing through the mount, not by mount
+# output formatting.
 BIND_OK=0
 for p in $PAIRS; do
     pair_of "$p"
     [ -d "$real" ] || continue
-    if mount 2>/dev/null | grep " on $real " | grep -q "$SRC_MNT"; then
+    if [ -f "$real/$MARKER" ]; then
         log_i "already bind-mounted (our tmpfs): $real"
         BIND_OK=1
         continue
