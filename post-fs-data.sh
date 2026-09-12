@@ -470,6 +470,10 @@ else
 fi
 
 # --- 8h. lock read-only (stock semantic) ------------------------------
+# The ro remount applies per mount namespace: the zygote namespaces got
+# their own bind layers in 8g and would otherwise stay rw - apps run in
+# those namespaces and mount-scanner checks (rw/superblock-rw) run there
+# too, so every namespace must be locked.
 for p in $PAIRS; do
     pair_of "$p"
     [ -d "$real" ] || continue
@@ -479,5 +483,16 @@ for p in $PAIRS; do
         log_i "warning: could not remount $real read-only"
     fi
 done
+if command -v nsenter >/dev/null 2>&1; then
+    for pid in 1 $(pgrep zygote 2>/dev/null) $(pgrep zygote64 2>/dev/null); do
+        [ -d "/proc/$pid/ns/mnt" ] || continue
+        for p in $PAIRS; do
+            pair_of "$p"
+            [ -d "$real" ] || continue
+            nsenter --mount="/proc/$pid/ns/mnt" -- mount -o remount,ro,bind "$real" 2>/dev/null
+        done
+    done
+    log_i "zygote views locked read-only"
+fi
 
 log_i "finished"
