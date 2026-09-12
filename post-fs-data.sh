@@ -52,6 +52,7 @@ INJECT_MODE=tmpfs
 SYNC_SYSTEM=0
 CONFIG_FILE="$MODDIR/config"
 if [ -f "$CONFIG_FILE" ]; then
+    # shellcheck source=/dev/null
     . "$CONFIG_FILE" 2>/dev/null
 fi
 case "$INJECT_MODE" in
@@ -91,6 +92,8 @@ fix_ctx() {
 # alternation operator, so the strip silently fails and both halves
 # come back as the whole pair. IFS word-splitting is POSIX-exact.
 pair_of() {  # $1 = pair; sets global $staging and $real
+    # Android's mksh (POSIX mode) does support 'local'
+    # shellcheck disable=SC3043
     local _ifs
     _ifs=$IFS
     IFS='|'
