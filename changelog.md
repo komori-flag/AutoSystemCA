@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.1（真机实测通过）
+
+- **挂载层识别改为镜像内标记文件**：tmpfs 挂载在 `/proc/mounts` 的源字段显示为 `tmpfs` 而非挂载点路径，此前基于源路径的清理/幂等判断永远认不出自己的层 → 每次运行叠加一层（实测每路径叠到 3 层）。现在以服务镜像内的 `.autoca_marker` 识别：清理时逐层卸掉带标记的层、幂等判断视"标记可见"为已挂载，**系统原生挂载（无标记）永不被误卸**
+- **只读锁定扩展到 zygote 命名空间**：ro remount 只作用于当前命名空间，nsenter 注入到 zygote 的层保持 rw——App 所在的命名空间因此被检测工具报 `SYSTEM_PARTITION_WRITABLE`。现在每个命名空间同步 remount ro
+- 实测验证（K80 Pro / HyperOS 2.0 / KSU-Next）：
+  - 挂载稳定 3 层 ro tmpfs（apex ×2 + system），重复执行不叠加
+  - 证书注入、删除同步（原始删除 → 转换清理 → 挂载刷新）全链路正常
+  - Hunter：仅 `ACTIVE_STACKED_FS_OVER_SYSTEM` 一条（`SYNC_SYSTEM=1` 挂载 system 路径导致，原理不可消除；`SYNC_SYSTEM=0` 时零告警）
+  - 无任何 /data 特征（旧的 `ACTIVE_DATA_BACKED_SYSTEM_MOUNT` 已消失）
+
 ## v2.0（安全架构重构）
 
 ⚠️ **v1.3 ~ v1.5.1 已全部撤回**（Release 与 tag 删除）：这些版本的自 bind 挂载把模块路径暴露在 mount 表（`root=/adb/modules/...`，被检测工具标记为 data-backed 系统挂载），并诱导安装 meta-overlayfs（其镜像模型与动态注入冲突，空目录 bind 曾导致系统无法启动）。请勿使用旧版。
